@@ -37,11 +37,21 @@
  * address names what it opens, so it can be opened in a new tab, copied, or
  * followed by a page whose script stopped. The script follows it in place.
  * In the text, the same links lead to the entry they name on this page.
+ *
+ * The depth is a set of radio buttons above both, and the styles below hide
+ * every part deeper than the one chosen, in the interactive view and in the
+ * text alike, so it works without the script. Each part carries the depth
+ * the content gives it. The script only keeps the choice in the address as
+ * lx-depth, and restores it from there; choosing a view, a family or a link
+ * leaves it as it is.
  */
 import {
   actors,
   audit,
+  defaultDepth,
   defaultFamily,
+  depthOf,
+  depths,
   families,
   objectMap,
   parentOf,
@@ -51,6 +61,13 @@ import {
 } from '../lifecycle-explorer.mjs';
 
 const actorLabel = new Map(actors.map((actor) => [actor.id, actor.label]));
+
+// The attributes that put one part of an entry at its depth: the depth the
+// content gives it, and which part it is, for the gate to check against the
+// content. An actor's row in a stage is the `lead` part when that actor
+// leads the stage.
+const part = (kind: string, name: string) => ({ 'data-lx-depth': depthOf[kind][name], 'data-lx-part': `${kind}:${name}` });
+const actorPart = (actor: { id: string; lead: boolean }) => part('stage', actor.lead ? 'lead' : actor.id);
 
 // Addresses inside the explorer. One in the interactive view names the view
 // and the value it opens and ends at the explorer's own anchor; one in the
@@ -294,9 +311,37 @@ const workflowModel = {
   aria-label="Lifecycle explorer"
   data-lx
   data-lx-default-family={defaultFamily}
+  data-lx-default-depth={defaultDepth}
 >
   <div class="lx__head">
     <p class="lx__eyebrow">Lifecycle explorer</p>
+    <fieldset class="lx__depth" data-lx-depths>
+      <legend class="lx__label">Depth</legend>
+      <div class="lx__depth-options">
+        {
+          depths.map((one) => (
+            <label class="lx__depth-option">
+              <input
+                type="radio"
+                name="lx-depth"
+                value={one.id}
+                checked={one.id === defaultDepth}
+                autocomplete="off"
+                data-lx-depth-choice
+              />
+              <span>{one.label}</span>
+            </label>
+          ))
+        }
+      </div>
+      {
+        depths.map((one) => (
+          <p class="lx__depth-note" data-lx-depth-note={one.id}>
+            {one.text}
+          </p>
+        ))
+      }
+    </fieldset>
   </div>
 
   <div class="lx__app" data-lx-app data-pagefind-ignore hidden>
@@ -407,14 +452,19 @@ const workflowModel = {
                       {stage.title}
                       {view.isBranch(stage.id) && <span class="lx__branch-tag">{view.homePath(stage.id).label}</span>}
                     </p>
-                    <p class="lx__phase">
+                    <p class="lx__phase" {...part('stage', 'phase')}>
                       <span class="lx__label">Phase</span> <code>{stage.phase}</code>
                     </p>
                   </div>
 
                   <ul class="lx__actors" aria-label="Who acts">
                     {actorsOf(stage).map((actor) => (
-                      <li class="lx__actor" data-actor={actor.id} data-lead={actor.lead ? 'true' : undefined}>
+                      <li
+                        class="lx__actor"
+                        data-actor={actor.id}
+                        data-lead={actor.lead ? 'true' : undefined}
+                        {...actorPart(actor)}
+                      >
                         <span class="lx__actor-name">
                           {actor.label}
                           {actor.lead && <span class="lx__lead">acts</span>}
@@ -424,7 +474,7 @@ const workflowModel = {
                     ))}
                   </ul>
 
-                  <div class="lx__involved">
+                  <div class="lx__involved" {...part('stage', 'objects')}>
                     <span class="lx__label">Objects</span>
                     {stage.objects.map((id) => (
                       <button type="button" class="lx__chip" data-lx-select={id}>
@@ -439,12 +489,12 @@ const workflowModel = {
                   </div>
 
                   {stage.expect && (
-                    <p class="lx__expect">
+                    <p class="lx__expect" {...part('stage', 'expect')}>
                       <span class="lx__label">Expect</span> {stage.expect}
                     </p>
                   )}
 
-                  <div class="lx__inspect">
+                  <div class="lx__inspect" {...part('stage', 'inspect')}>
                     <span class="lx__label">Inspect</span>
                     {stage.inspect.map((step) => (
                       <div class="lx__command">
@@ -454,11 +504,11 @@ const workflowModel = {
                     ))}
                   </div>
 
-                  <p class="lx__done">
+                  <p class="lx__done" {...part('stage', 'done')}>
                     <span class="lx__label">Done when</span> {stage.done}
                   </p>
                   {stage.limits && (
-                    <p class="lx__limits">
+                    <p class="lx__limits" {...part('stage', 'limits')}>
                       <span class="lx__label">What it does not prove</span> {stage.limits}
                     </p>
                   )}
@@ -540,11 +590,11 @@ const workflowModel = {
                     </span>
                     {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
                   </p>
-                  <p>{object.purpose}</p>
-                  <p>
+                  <p {...part('object', 'purpose')}>{object.purpose}</p>
+                  <p {...part('object', 'lives')}>
                     <span class="lx__label">Where</span> {object.lives}
                   </p>
-                  <p>
+                  <p {...part('object', 'writer')}>
                     <span class="lx__label">Written by</span> {actorLabel.get(object.writer)}
                   </p>
                   <ul class="lx__relations" aria-label={`How ${object.label} relates to the others`}>
@@ -571,7 +621,7 @@ const workflowModel = {
                       </li>
                     ))}
                   </ul>
-                  <div class="lx__inspect">
+                  <div class="lx__inspect" {...part('object', 'inspect')}>
                     <span class="lx__label">Inspect</span>
                     {object.inspect.map((step) => (
                       <div class="lx__command">
@@ -618,7 +668,7 @@ const workflowModel = {
     <div class="lx__audit" data-lx-audit data-lx-audit-model={JSON.stringify(auditModel)} hidden>
       <p class="lx__title">{audit.title}</p>
       <p class="lx__summary">{audit.summary}</p>
-      <p class="lx__measured">
+      <p class="lx__measured" {...part('block', 'auditMeasured')}>
         {audit.measured} <a href={audit.measuredLink.href}>{audit.measuredLink.label}</a>.
       </p>
 
@@ -673,16 +723,16 @@ const workflowModel = {
               <span>{source.label}</span>
               <span class="lx__node-kind">{groupLabel.get(source.group)}</span>
             </p>
-            <p>
+            <p {...part('source', 'records')}>
               <span class="lx__label">Records</span> {source.records}
             </p>
-            <p>
+            <p {...part('source', 'establishes')}>
               <span class="lx__label">Establishes</span> {source.establishes}
             </p>
-            <p class="lx__limits">
+            <p class="lx__limits" {...part('source', 'cannot')}>
               <span class="lx__label">Cannot establish</span> {source.cannot}
             </p>
-            <div>
+            <div {...part('source', 'ids')}>
               <span class="lx__label">Joins the others by</span>
               <ul class="lx__ids">
                 {source.ids.map((id) => (
@@ -690,7 +740,7 @@ const workflowModel = {
                 ))}
               </ul>
             </div>
-            <div class="lx__inspect">
+            <div class="lx__inspect" {...part('source', 'readers')}>
               <span class="lx__label">Read it with</span>
               {source.readers.map((reader) => (
                 <div class="lx__command">
@@ -703,10 +753,14 @@ const workflowModel = {
                 </div>
               ))}
             </div>
-            <p>
+            <p {...part('source', 'retention')}>
               <span class="lx__label">Kept</span> {source.retention}
             </p>
-            <ul class="lx__survives" aria-label={`What is left of ${source.label} after a loss`}>
+            <ul
+              class="lx__survives"
+              aria-label={`What is left of ${source.label} after a loss`}
+              {...part('source', 'survives')}
+            >
               {audit.losses.map((loss) => (
                 <li data-lx-survives={loss.id} data-verdict={source.survives[loss.id].verdict}>
                   <strong>{loss.label}</strong>
@@ -719,7 +773,7 @@ const workflowModel = {
               ))}
             </ul>
             {identitiesOf(source.id).length > 0 && (
-              <p>
+              <p {...part('source', 'names')}>
                 <span class="lx__label">Names</span>{' '}
                 {identitiesOf(source.id)
                   .map((identity) => identity.label)
@@ -727,7 +781,7 @@ const workflowModel = {
               </p>
             )}
             {gapsOf(source.id).length > 0 && (
-              <p class="lx__gap-links">
+              <p class="lx__gap-links" {...part('source', 'gaps')}>
                 <span class="lx__label">Gaps closed</span>
                 {gapsOf(source.id).map((gap) => (
                   <a href={issueUrl(gap.issue)}>
@@ -746,8 +800,10 @@ const workflowModel = {
       }
 
       <div class="lx__map">
-        <p class="lx__map-title">Identities an audit keeps apart</p>
-        <ul class="lx__identities">
+        <p class="lx__map-title" {...part('block', 'auditIdentities')}>
+          Identities an audit keeps apart
+        </p>
+        <ul class="lx__identities" {...part('block', 'auditIdentities')}>
           {
             audit.identities.map((identity) => (
               <li data-lx-identity={identity.id}>
@@ -776,7 +832,7 @@ const workflowModel = {
         </ul>
       </div>
 
-      <div class="lx__map">
+      <div class="lx__map" {...part('block', 'auditGaps')}>
         <p class="lx__map-title">Gaps since closed</p>
         <ul class="lx__gaps">
           {
@@ -881,26 +937,26 @@ const workflowModel = {
                 {nodeGroupLabel.get(node.group)}
               </span>
             </p>
-            <p>
+            <p {...part('node', 'holds')}>
               <span class="lx__label">Holds</span> {node.holds}
             </p>
-            <p>
+            <p {...part('node', 'writtenBy')}>
               <span class="lx__label">Written by</span> {node.writtenBy}
             </p>
-            <p>
+            <p {...part('node', 'operator')}>
               <span class="lx__label">The operator</span> {node.operator}
             </p>
-            <p>
+            <p {...part('node', 'scope')}>
               <span class="lx__label">Where</span> {scopeLabel.get(node.scope)}
             </p>
             <p>
               <span class="lx__label">Family</span> {familiesOf(node)}
             </p>
-            <p data-lx-change={node.change.verdict}>
+            <p data-lx-change={node.change.verdict} {...part('node', 'change')}>
               <span class="lx__label">Changes</span>{' '}
               <span class="lx__verdict-tag">{changeLabel.get(node.change.verdict)}</span> {node.change.text}
             </p>
-            <p>
+            <p {...part('node', 'deletion')}>
               <span class="lx__label">Deleting it</span> {node.deletion}
             </p>
             <ul class="lx__relations" aria-label={`How ${node.label} relates to the others`}>
@@ -922,7 +978,7 @@ const workflowModel = {
                 </li>
               ))}
             </ul>
-            <div class="lx__inspect">
+            <div class="lx__inspect" {...part('node', 'inspect')}>
               <span class="lx__label">Inspect</span>
               {node.inspect.map((step) => (
                 <div class="lx__command">
@@ -932,7 +988,7 @@ const workflowModel = {
               ))}
             </div>
             {node.gap && (
-              <p class="lx__limits">
+              <p class="lx__limits" {...part('node', 'gap')}>
                 <span class="lx__label">Gap</span> {node.gap}
               </p>
             )}
@@ -1045,11 +1101,11 @@ const workflowModel = {
                   </span>
                 </p>
               </div>
-              <p>{stage.goal}</p>
-              <p>
+              <p {...part('wstage', 'goal')}>{stage.goal}</p>
+              <p {...part('wstage', 'person')}>
                 <span class="lx__label">You</span> {stage.person}
               </p>
-              <div class="lx__inspect">
+              <div class="lx__inspect" {...part('wstage', 'inspect')}>
                 <span class="lx__label">{stage.family === 'outside' ? 'Where' : 'Commands'}</span>
                 {stage.inspect.map((step) =>
                   step.command ? (
@@ -1066,7 +1122,7 @@ const workflowModel = {
                   ),
                 )}
               </div>
-              <p data-lx-wpart="operator">
+              <p data-lx-wpart="operator" {...part('wstage', 'operator')}>
                 <span class="lx__label">The operator</span>{' '}
                 <span class="lx__mark" data-mark="shipped">
                   {markLabel.get('shipped')}
@@ -1074,23 +1130,23 @@ const workflowModel = {
                 {stage.operator}
               </p>
               {stage.decision && (
-                <p data-lx-wpart="decision">
+                <p data-lx-wpart="decision" {...part('wstage', 'decision')}>
                   <span class="lx__label">Decision</span> <strong>{decisionById.get(stage.decision).label}.</strong>{' '}
                   {stage.decisionText}
                 </p>
               )}
-              <p data-lx-wpart="gate">
+              <p data-lx-wpart="gate" {...part('wstage', 'gate')}>
                 <span class="lx__label">Moves on when</span>{' '}
                 <span class="lx__mark" data-mark="proposed">
                   {markLabel.get('proposed')}
                 </span>{' '}
                 {stage.gate}
               </p>
-              <p class="lx__done">
+              <p class="lx__done" {...part('wstage', 'done')}>
                 <span class="lx__label">Done when</span> {stage.done}
               </p>
               {stage.limits && (
-                <p class="lx__limits">
+                <p class="lx__limits" {...part('wstage', 'limits')}>
                   <span class="lx__label">What it does not prove</span> {stage.limits}
                 </p>
               )}
@@ -1132,7 +1188,7 @@ const workflowModel = {
                   )}
                 </div>
               ))}
-              <p class="lx__goto">
+              <p class="lx__goto" {...part('wstage', 'objects')}>
                 <span class="lx__label">Objects</span>
                 {stage.objects.map((id) => (
                   <a class="lx__chip" href={nodeHref(id)} data-lx-open data-lx-link>
@@ -1155,7 +1211,7 @@ const workflowModel = {
         }
       </div>
 
-      <div class="lx__map">
+      <div class="lx__map" {...part('block', 'workflowPreconditions')}>
         <p class="lx__map-title">Before the first stage</p>
         <ul class="lx__identities">
           {
@@ -1196,7 +1252,7 @@ const workflowModel = {
         </ul>
       </div>
 
-      <div class="lx__map">
+      <div class="lx__map" {...part('block', 'workflowDecisions')}>
         <p class="lx__map-title">What each decision covers</p>
         <ul class="lx__identities">
           {
@@ -1225,7 +1281,7 @@ const workflowModel = {
         </ul>
       </div>
 
-      <div class="lx__map">
+      <div class="lx__map" {...part('block', 'workflowRecord')}>
         <p class="lx__map-title">The record a pipeline can keep</p>
         <p>{workflow.recordText}</p>
         <ul class="lx__gaps">
@@ -1297,24 +1353,29 @@ const workflowModel = {
                 {block.stages.map((stage) => (
                   <li data-lx-text-stage={stage.id}>
                     <p>
-                      <strong>{stage.title}.</strong> Phase <code>{stage.phase}</code>.
+                      <strong>{stage.title}.</strong>{' '}
+                      <span {...part('stage', 'phase')}>
+                        Phase <code>{stage.phase}</code>.
+                      </span>
                     </p>
                     <ul>
                       {actorsOf(stage).map((actor) => (
-                        <li>
+                        <li {...actorPart(actor)}>
                           <strong>{actor.label}:</strong> {actor.text}
                         </li>
                       ))}
                     </ul>
-                    <p>Objects: {stage.objects.map((id) => view.objectById.get(id).label).join(', ')}.</p>
-                    {stage.expect && <p>Expect: {stage.expect}</p>}
+                    <p {...part('stage', 'objects')}>
+                      Objects: {stage.objects.map((id) => view.objectById.get(id).label).join(', ')}.
+                    </p>
+                    {stage.expect && <p {...part('stage', 'expect')}>Expect: {stage.expect}</p>}
                     {stage.inspect.map((step) => (
-                      <p>
+                      <p {...part('stage', 'inspect')}>
                         <code>{step.command}</code>: {step.says}
                       </p>
                     ))}
-                    <p>Done when: {stage.done}</p>
-                    {stage.limits && <p>What it does not prove: {stage.limits}</p>}
+                    <p {...part('stage', 'done')}>Done when: {stage.done}</p>
+                    {stage.limits && <p {...part('stage', 'limits')}>What it does not prove: {stage.limits}</p>}
                     <p>
                       Read more:{' '}
                       {stage.links.map((link, index) => (
@@ -1344,7 +1405,14 @@ const workflowModel = {
           <ul class="lx__text-objects">
             {view.objects.map((object) => (
               <li id={textId(object.id)} data-lx-text-object={object.id}>
-                <strong>{object.label}</strong> ({object.kind}). {object.purpose} {object.lives}
+                <strong>{object.label}</strong> ({object.kind}). <span {...part('object', 'purpose')}>{object.purpose}</span>{' '}
+                <span {...part('object', 'lives')}>{object.lives}</span>{' '}
+                <span {...part('object', 'writer')}>Written by: {actorLabel.get(object.writer)}.</span>
+                {object.inspect.map((step) => (
+                  <p {...part('object', 'inspect')}>
+                    <code>{step.command}</code>: {step.says}
+                  </p>
+                ))}
                 <ul>
                   {view.relationsOf(object.id).map((relation) => (
                     <li>
@@ -1372,7 +1440,7 @@ const workflowModel = {
     <div class="lx__text-family lx__text-audit" data-lx-text-audit>
       <p class="lx__title">Audit: {audit.title}</p>
       <p class="lx__summary">{audit.textSummary}</p>
-      <p>
+      <p {...part('block', 'auditMeasured')}>
         {audit.measured} <a href={audit.measuredLink.href}>{audit.measuredLink.label}</a>.
       </p>
       {
@@ -1385,24 +1453,24 @@ const workflowModel = {
               {group.sources.map((source) => (
                 <li id={textId(source.id)} data-lx-text-source={source.id}>
                   <p>
-                    <strong>{source.label}.</strong> {source.records}
+                    <strong>{source.label}.</strong> <span {...part('source', 'records')}>{source.records}</span>
                   </p>
-                  <p>Establishes: {source.establishes}</p>
-                  <p>Cannot establish: {source.cannot}</p>
-                  <p>Joins the others by: {source.ids.join('; ')}.</p>
+                  <p {...part('source', 'establishes')}>Establishes: {source.establishes}</p>
+                  <p {...part('source', 'cannot')}>Cannot establish: {source.cannot}</p>
+                  <p {...part('source', 'ids')}>Joins the others by: {source.ids.join('; ')}.</p>
                   {source.readers.map((reader) =>
                     reader.command ? (
-                      <p>
+                      <p {...part('source', 'readers')}>
                         <code>{reader.command}</code>: {reader.says}
                       </p>
                     ) : (
-                      <p>
+                      <p {...part('source', 'readers')}>
                         {reader.system} {reader.says}
                       </p>
                     ),
                   )}
-                  <p>Kept: {source.retention}</p>
-                  <ul>
+                  <p {...part('source', 'retention')}>Kept: {source.retention}</p>
+                  <ul {...part('source', 'survives')}>
                     {audit.losses.map((loss) => (
                       <li data-lx-text-survives={loss.id}>
                         {loss.label}: {verdictLabel.get(source.survives[loss.id].verdict)},{' '}
@@ -1427,10 +1495,10 @@ const workflowModel = {
         ))
       }
       <div class="lx__text-path">
-        <p>
+        <p {...part('block', 'auditIdentities')}>
           <strong>Identities an audit keeps apart.</strong>
         </p>
-        <ul class="lx__text-objects">
+        <ul class="lx__text-objects" {...part('block', 'auditIdentities')}>
           {
             audit.identities.map((identity) => (
               <li data-lx-text-identity={identity.id}>
@@ -1452,7 +1520,7 @@ const workflowModel = {
           ))
         }
       </div>
-      <div class="lx__text-path">
+      <div class="lx__text-path" {...part('block', 'auditGaps')}>
         <p>
           <strong>Gaps since closed.</strong>
         </p>
@@ -1513,15 +1581,16 @@ const workflowModel = {
               {group.nodes.map((node) => (
                 <li id={textId(node.id)} data-lx-text-node={node.id}>
                   <p>
-                    <strong>{node.label}</strong> ({node.kind}; {scopeLabel.get(node.scope)}; {familiesOf(node)}).{' '}
-                    {node.holds}
+                    <strong>{node.label}</strong> ({node.kind}
+                    <span {...part('node', 'scope')}>; {scopeLabel.get(node.scope)}</span>; {familiesOf(node)}).{' '}
+                    <span {...part('node', 'holds')}>{node.holds}</span>
                   </p>
-                  <p>Written by: {node.writtenBy}</p>
-                  <p>The operator: {node.operator}</p>
-                  <p>
+                  <p {...part('node', 'writtenBy')}>Written by: {node.writtenBy}</p>
+                  <p {...part('node', 'operator')}>The operator: {node.operator}</p>
+                  <p {...part('node', 'change')}>
                     Changes: {changeLabel.get(node.change.verdict)}. {node.change.text}
                   </p>
-                  <p>Deleting it: {node.deletion}</p>
+                  <p {...part('node', 'deletion')}>Deleting it: {node.deletion}</p>
                   <ul>
                     {nodeRelations(node.id).map((relation) => (
                       <li data-lx-text-relation={`${relation.type}:${relation.other}`}>
@@ -1531,11 +1600,11 @@ const workflowModel = {
                     ))}
                   </ul>
                   {node.inspect.map((step) => (
-                    <p>
+                    <p {...part('node', 'inspect')}>
                       <code>{step.command}</code>: {step.says}
                     </p>
                   ))}
-                  {node.gap && <p>Gap: {node.gap}</p>}
+                  {node.gap && <p {...part('node', 'gap')}>Gap: {node.gap}</p>}
                   <p>
                     Read more:{' '}
                     {node.links.map((link, index) => (
@@ -1585,7 +1654,7 @@ const workflowModel = {
           ))
         }
       </ul>
-      <div class="lx__text-path">
+      <div class="lx__text-path" {...part('block', 'workflowPreconditions')}>
         <p>
           <strong>Before the first stage.</strong>
         </p>
@@ -1618,34 +1687,35 @@ const workflowModel = {
           workflow.stages.map((stage, index) => (
             <li id={textId(stage.id)} data-lx-text-wstage={stage.id}>
               <p>
-                <strong>{stage.title}.</strong> {stageFamily(stage.family)}. {stage.goal}
+                <strong>{stage.title}.</strong> {stageFamily(stage.family)}.{' '}
+                <span {...part('wstage', 'goal')}>{stage.goal}</span>
               </p>
-              <p>You: {stage.person}</p>
+              <p {...part('wstage', 'person')}>You: {stage.person}</p>
               {stage.inspect.map((step) =>
                 step.command ? (
-                  <p>
+                  <p {...part('wstage', 'inspect')}>
                     <code>{step.command}</code>: {step.says}
                   </p>
                 ) : (
-                  <p>
+                  <p {...part('wstage', 'inspect')}>
                     {step.system} {step.says}
                   </p>
                 ),
               )}
-              <p data-lx-text-wpart="operator">
+              <p data-lx-text-wpart="operator" {...part('wstage', 'operator')}>
                 The operator, {markLabel.get('shipped').toLowerCase()}: {stage.operator}
               </p>
               {stage.decision && (
-                <p data-lx-text-wpart="decision">
+                <p data-lx-text-wpart="decision" {...part('wstage', 'decision')}>
                   Decision: <a href={textHref(stage.decision)}>{decisionById.get(stage.decision).label}</a>.{' '}
                   {stage.decisionText}
                 </p>
               )}
-              <p data-lx-text-wpart="gate">
+              <p data-lx-text-wpart="gate" {...part('wstage', 'gate')}>
                 Moves on when, {markLabel.get('proposed').toLowerCase()}: {stage.gate}
               </p>
-              <p>Done when: {stage.done}</p>
-              {stage.limits && <p>What it does not prove: {stage.limits}</p>}
+              <p {...part('wstage', 'done')}>Done when: {stage.done}</p>
+              {stage.limits && <p {...part('wstage', 'limits')}>What it does not prove: {stage.limits}</p>}
               <p>What can stop it:</p>
               <ul>
                 {stage.outcomes.map((one) => (
@@ -1662,7 +1732,7 @@ const workflowModel = {
                   </li>
                 ))}
               </ul>
-              <p>
+              <p {...part('wstage', 'objects')}>
                 Objects:{' '}
                 {stage.objects.map((id, at) => (
                   <>
@@ -1700,7 +1770,7 @@ const workflowModel = {
           }
         </ul>
       </div>
-      <div class="lx__text-path">
+      <div class="lx__text-path" {...part('block', 'workflowDecisions')}>
         <p>
           <strong>What each decision covers.</strong>
         </p>
@@ -1720,7 +1790,7 @@ const workflowModel = {
           }
         </ul>
       </div>
-      <div class="lx__text-path">
+      <div class="lx__text-path" {...part('block', 'workflowRecord')}>
         <p>
           <strong>The record a pipeline can keep.</strong> {workflow.recordText}
         </p>
@@ -1803,6 +1873,85 @@ const workflowModel = {
 
   .lx__label {
     margin-right: 0.35rem;
+  }
+
+  /* The depth choice: radio buttons, so it works without the script, drawn
+   * like the view bar. Each note says what its depth adds, and only the
+   * chosen one shows. */
+  .lx__depth {
+    margin: 0.5rem 0 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+
+  .lx__depth legend {
+    float: left;
+    margin-block: 0.3rem;
+    padding: 0;
+  }
+
+  .lx__depth-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .lx__depth-option {
+    position: relative;
+  }
+
+  .lx__depth-option input {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .lx__depth-option span {
+    display: inline-block;
+    padding: 0.25rem 0.7rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-text);
+    background: var(--sl-color-bg);
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 999px;
+  }
+
+  .lx__depth-option input:checked + span {
+    border-color: var(--sl-color-accent);
+    background: var(--sl-color-accent-low);
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .lx__depth-option input:focus-visible + span {
+    outline: 2px solid var(--sl-color-accent);
+    outline-offset: 2px;
+  }
+
+  .lx__depth-note {
+    clear: left;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+  }
+
+  .lx [data-lx-depth-note] {
+    display: none;
+  }
+
+  .lx:has([data-lx-depth-choice][value='overview']:checked) [data-lx-depth-note='overview'],
+  .lx:has([data-lx-depth-choice][value='product']:checked) [data-lx-depth-note='product'],
+  .lx:has([data-lx-depth-choice][value='implementation']:checked) [data-lx-depth-note='implementation'] {
+    display: block;
+  }
+
+  /* A part deeper than the depth chosen is not shown, in the interactive
+   * view and in the text alike. */
+  .lx:has([data-lx-depth-choice][value='overview']:checked) :is([data-lx-depth='product'], [data-lx-depth='implementation']),
+  .lx:has([data-lx-depth-choice][value='product']:checked) [data-lx-depth='implementation'] {
+    display: none;
   }
 
   .lx__title {
@@ -2696,6 +2845,7 @@ const workflowModel = {
   const NODE_PARAM = 'lx-node';
   const STEP_PARAM = 'lx-step';
   const OUTCOME_PARAM = 'lx-outcome';
+  const DEPTH_PARAM = 'lx-depth';
   const JOURNEY = 'journey';
   const AUDIT = 'audit';
   const OBJECTS = 'objects';
@@ -3452,6 +3602,29 @@ const workflowModel = {
       renderAll(true);
       reveal(landing());
     });
+
+    // The depth is the reader's, not a view's: the styles apply it, choosing
+    // a view, a family or a link leaves it as it is, and the address keeps it
+    // unless it is the default.
+    const depthChoices = [...root.querySelectorAll<HTMLInputElement>('[data-lx-depth-choice]')];
+    const defaultDepth = root.dataset.lxDefaultDepth ?? '';
+    const knownDepth = (value: string | null) => depthChoices.some((choice) => choice.value === value);
+    for (const choice of depthChoices) {
+      choice.addEventListener('change', () => {
+        if (!choice.checked) return;
+        try {
+          const url = new URL(location.href);
+          if (choice.value === defaultDepth) url.searchParams.delete(DEPTH_PARAM);
+          else url.searchParams.set(DEPTH_PARAM, choice.value);
+          history.replaceState(history.state, '', url);
+        } catch {
+          // A sandboxed frame can refuse replaceState; the depth still applies.
+        }
+      });
+    }
+    const asked = new URLSearchParams(location.search).get(DEPTH_PARAM);
+    const depth = knownDepth(asked) ? asked : defaultDepth;
+    for (const choice of depthChoices) choice.checked = choice.value === depth;
 
     open(new URLSearchParams(location.search));
     app.hidden = false;

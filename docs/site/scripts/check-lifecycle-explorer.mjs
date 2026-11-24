@@ -81,6 +81,17 @@
 //     it on marked proposed, every stop with what clears it, and every
 //     decision, record field and reader, and at 390px and 320px the workflow
 //     fits at every stage and every stop;
+//   - the depths are Overview, Product and Implementation in that order, the
+//     deepest the default; every part of every entry, in the interactive
+//     view and in the text, is tagged at the depth the content gives it, and
+//     each essential at Overview; at each depth chosen, with the script and
+//     without it, every part deeper than it is hidden and every other part
+//     shows, on a panel open on screen as well, and no link of the text leads
+//     to a part it hides; the choice is written to the address as lx-depth
+//     and the rest of the address left as it was; choosing a view, a family,
+//     a path, a stage or a link keeps it; a link that names a depth opens at
+//     it and one that names an unknown depth at the default; and the arrow
+//     keys choose it;
 //   - a related object, an identity's source and a link into another view is
 //     an anchor whose address opens what it names, laid out inline where a
 //     full stop follows it; every distinct address opens what it names; a
@@ -99,7 +110,18 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { audit, defaultFamily, families, objectMap, parentOf, walkOf, workflow } from '../src/lifecycle-explorer.mjs';
+import {
+  audit,
+  defaultDepth,
+  defaultFamily,
+  depthOf,
+  depths,
+  families,
+  objectMap,
+  parentOf,
+  walkOf,
+  workflow,
+} from '../src/lifecycle-explorer.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(scriptDir, '..');
@@ -1741,6 +1763,250 @@ export function inPlaceProblems(readings) {
   return problems;
 }
 
+// What #817 asks of the depths: Overview, Product and Implementation, in that
+// order, each showing more of the same entries. The parts are the ones the
+// renderer tags, kind by kind, and the essentials are the parts an entry
+// must say at Overview: who acts and what a person does, what an object or
+// a source is for, and how a reader knows a step is done.
+export const DEPTH_REQUIRED = {
+  ids: ['overview', 'product', 'implementation'],
+  parts: {
+    stage: ['lead', 'you', 'done', 'phase', 'operator', 'expect', 'inspect', 'limits', 'kubernetes', 'executor', 'objects'],
+    object: ['purpose', 'writer', 'inspect', 'lives'],
+    source: ['establishes', 'cannot', 'records', 'readers', 'retention', 'survives', 'names', 'gaps', 'ids'],
+    node: ['holds', 'writtenBy', 'change', 'deletion', 'inspect', 'gap', 'operator', 'scope'],
+    wstage: ['goal', 'person', 'gate', 'done', 'operator', 'inspect', 'decision', 'limits', 'objects'],
+    block: ['auditMeasured', 'auditIdentities', 'auditGaps', 'workflowPreconditions', 'workflowDecisions', 'workflowRecord'],
+  },
+  essentials: {
+    stage: ['lead', 'you', 'done'],
+    object: ['purpose', 'writer'],
+    source: ['establishes', 'cannot'],
+    node: ['holds', 'writtenBy'],
+    wstage: ['goal', 'person', 'gate', 'done'],
+  },
+};
+
+const rankOf = (ids, id) => ids.indexOf(id);
+
+// depthModelProblems judges the depths and the table of parts against what
+// #817 asks: three depths in order, the default the deepest so a link that
+// names none shows what it always showed, every part the renderer tags named
+// once at a depth that exists, each essential at Overview, and every kind of
+// entry saying more at each depth than at the one before.
+export function depthModelProblems({ depths, defaultDepth, depthOf }, required = DEPTH_REQUIRED) {
+  const problems = [];
+  const ids = (depths ?? []).map((one) => one.id);
+  if (ids.join(' ') !== required.ids.join(' ')) problems.push(`the depths are ${ids.join(', ') || 'none'}, not ${required.ids.join(', ')}`);
+  for (const one of depths ?? []) {
+    if (!one.label?.trim() || !one.text?.trim()) problems.push(`the depth "${one.id}" lacks its label or what it shows`);
+  }
+  if (defaultDepth !== required.ids.at(-1)) {
+    problems.push(`the default depth is "${defaultDepth}", not "${required.ids.at(-1)}", so a link that names no depth would show less than it did`);
+  }
+  const kinds = Object.keys(depthOf ?? {});
+  for (const kind of Object.keys(required.parts)) {
+    if (!kinds.includes(kind)) problems.push(`depthOf leaves out the kind "${kind}"`);
+  }
+  for (const kind of kinds) {
+    const want = required.parts[kind];
+    if (!want) {
+      problems.push(`depthOf names the kind "${kind}", which nothing renders`);
+      continue;
+    }
+    const parts = depthOf[kind];
+    for (const name of want) {
+      if (!(name in parts)) problems.push(`depthOf.${kind} leaves out the part "${name}"`);
+    }
+    for (const [name, at] of Object.entries(parts)) {
+      if (!want.includes(name)) problems.push(`depthOf.${kind} names "${name}", which nothing renders`);
+      if (!required.ids.includes(at)) problems.push(`depthOf.${kind}.${name} is "${at}", which is not a depth`);
+    }
+    for (const name of required.essentials[kind] ?? []) {
+      if (name in parts && parts[name] !== required.ids[0]) {
+        problems.push(`depthOf.${kind}.${name} first shows at "${parts[name]}", and ${required.ids[0]} has to say it`);
+      }
+    }
+    if (kind === 'block') continue;
+    for (const at of required.ids) {
+      if (!Object.values(parts).includes(at)) problems.push(`depthOf.${kind} shows nothing first at "${at}"`);
+    }
+  }
+  return problems;
+}
+
+// expectedParts is the parts one entry carries where it is rendered: the
+// interactive view's panel or the text's entry. A part of a field the entry
+// leaves out is not expected, an actor's row is `lead` when that actor
+// leads, and a source's names and closed gaps are listed in its panel alone,
+// since the text gives both a block of their own.
+export function expectedParts(kind, entry, where, context = {}) {
+  const parts = [];
+  const add = (name, when = true) => when && parts.push(name);
+  if (kind === 'stage') {
+    add('lead');
+    for (const actor of ['you', 'operator', 'kubernetes', 'executor']) add(actor, Boolean(entry.actors[actor]) && actor !== entry.lead);
+    add('phase');
+    add('objects');
+    add('expect', Boolean(entry.expect));
+    add('inspect');
+    add('done');
+    add('limits', Boolean(entry.limits));
+  } else if (kind === 'object') {
+    for (const name of ['purpose', 'writer', 'inspect', 'lives']) add(name);
+  } else if (kind === 'source') {
+    for (const name of ['records', 'establishes', 'cannot', 'ids', 'readers', 'retention', 'survives']) add(name);
+    add('names', where === 'app' && (context.identities ?? []).some((identity) => identity.recordedIn.includes(entry.id)));
+    add('gaps', where === 'app' && (context.gaps ?? []).some((gap) => gap.sources.includes(entry.id)));
+  } else if (kind === 'node') {
+    for (const name of ['holds', 'writtenBy', 'operator', 'scope', 'change', 'deletion', 'inspect']) add(name);
+    add('gap', Boolean(entry.gap));
+  } else if (kind === 'wstage') {
+    for (const name of ['goal', 'person', 'inspect', 'operator', 'gate', 'done', 'objects']) add(name);
+    add('decision', Boolean(entry.decision));
+    add('limits', Boolean(entry.limits));
+  }
+  return parts.sort();
+}
+
+// depthRenderProblems judges what the page tags against the content: every
+// entry, in the interactive view and in the text, carries each part it has
+// and no other, every tagged part sits at the depth the table gives it, and
+// every block is tagged in both.
+export function depthRenderProblems(reading, { depthOf, entries, context }) {
+  const problems = [];
+  const found = new Map((reading.entries ?? []).map((one) => [`${one.where} ${one.kind} ${one.id}`, one]));
+  for (const where of ['app', 'text']) {
+    for (const [kind, list] of Object.entries(entries)) {
+      for (const entry of list) {
+        const at = `the ${where === 'app' ? 'interactive view' : 'text'}’s ${kind} "${entry.id}"`;
+        const got = found.get(`${where} ${kind} ${entry.id}`);
+        if (!got) {
+          problems.push(`${at} is not rendered with its parts`);
+          continue;
+        }
+        const want = expectedParts(kind, entry, where, context);
+        const names = [...new Set(got.parts.map(([name]) => name))].sort();
+        if (names.join(' ') !== want.join(' ')) problems.push(`${at} carries the parts ${names.join(', ') || 'none'}, not ${want.join(', ')}`);
+      }
+    }
+    for (const name of Object.keys(depthOf.block)) {
+      if (!(reading.blocks ?? []).some((one) => one.where === where && one.name === name)) {
+        problems.push(`the ${where === 'app' ? 'interactive view' : 'text'} does not tag the block "${name}"`);
+      }
+    }
+  }
+  for (const one of reading.entries ?? []) {
+    for (const [name, at] of one.parts) {
+      const want = depthOf[one.kind]?.[name];
+      if (want !== at) problems.push(`the ${one.where}’s ${one.kind} "${one.id}" shows ${name} at "${at}", not "${want ?? 'nowhere'}"`);
+    }
+  }
+  for (const one of reading.blocks ?? []) {
+    if (depthOf.block[one.name] !== one.at) problems.push(`the ${one.where}’s block "${one.name}" shows at "${one.at}", not "${depthOf.block[one.name] ?? 'nowhere'}"`);
+  }
+  for (const stray of reading.strays ?? []) problems.push(`a part "${stray}" sits outside any entry or block`);
+  return problems;
+}
+
+// depthShownProblems judges the page at each depth chosen: every tagged part
+// shows when its depth is no deeper than the one chosen and is hidden when it
+// is; exactly the chosen depth's note shows; one entry of each kind, open on
+// screen, shows the parts it should and only those; and a link in the text
+// never leads to a part the depth hides. `where` says which page was read,
+// with or without its script, and `text` that the text has to be on screen.
+export function depthShownProblems(readings, { ids, where, text = false }) {
+  const problems = [];
+  for (const id of ids) {
+    if (!readings.some((one) => one.depth === id)) problems.push(`${where}: the depth "${id}" was never chosen`);
+  }
+  for (const reading of readings) {
+    const at = `${where} at ${reading.depth}`;
+    const rank = rankOf(ids, reading.depth);
+    if (reading.checked !== reading.depth) problems.push(`${at}: the choice reads "${reading.checked}"`);
+    if ((reading.notes ?? []).join(' ') !== reading.depth) problems.push(`${at}: the notes shown are ${(reading.notes ?? []).join(', ') || 'none'}, not ${reading.depth}`);
+    if ((reading.parts ?? []).length === 0) problems.push(`${at}: no part was read`);
+    const wrong = new Map();
+    for (const [place, part, depth, shown] of reading.parts ?? []) {
+      const should = rankOf(ids, depth) <= rank;
+      if (shown !== should) {
+        const key = `${place} ${part} ${shown ? 'shown' : 'hidden'}`;
+        wrong.set(key, (wrong.get(key) ?? 0) + 1);
+      }
+    }
+    for (const [key, count] of wrong) {
+      const [place, part, state] = key.split(' ');
+      problems.push(`${at}: ${count} ${place} ${part} part(s) are ${state}`);
+    }
+    for (const { kind, id, parts, want } of reading.open ?? []) {
+      const expected = [...new Set(want.filter(([, depth]) => rankOf(ids, depth) <= rank).map(([name]) => name))].sort();
+      const shown = [...new Set(parts)].sort();
+      if (shown.join(' ') !== expected.join(' ')) problems.push(`${at}: the ${kind} "${id}" on screen shows ${shown.join(', ') || 'nothing'}, not ${expected.join(', ')}`);
+    }
+    if (text && !reading.textShown) problems.push(`${at}: the text is not on screen`);
+    if (reading.textShown && !reading.links) problems.push(`${at}: no link of the text was read`);
+    for (const link of reading.hiddenTargets ?? []) problems.push(`${at}: the link ${link} leads to a part this depth hides`);
+  }
+  return problems;
+}
+
+// depthAddressProblems judges the address the depth choice writes: a depth
+// other than the default as lx-depth, the default as no parameter, and every
+// other parameter left as it was.
+export function depthAddressProblems(readings, { ids, defaultDepth }) {
+  const problems = [];
+  if (readings.length === 0) return ['no depth was chosen in the interactive view'];
+  for (const { depth, before, search } of readings) {
+    const got = new URLSearchParams(search);
+    const want = depth === defaultDepth ? null : depth;
+    if (got.get('lx-depth') !== want) problems.push(`choosing ${depth} writes ${search || 'nothing'}, with lx-depth ${got.get('lx-depth') ?? 'absent'}, not ${want ?? 'absent'}`);
+    got.delete('lx-depth');
+    const kept = new URLSearchParams(before);
+    kept.delete('lx-depth');
+    if (got.toString() !== kept.toString()) problems.push(`choosing ${depth} changes the rest of the address from ?${kept} to ?${got}`);
+  }
+  for (const id of ids) {
+    if (!readings.some((one) => one.depth === id)) problems.push(`the depth "${id}" was never chosen in the interactive view`);
+  }
+  return problems;
+}
+
+// depthKeepProblems judges what happens to a depth while the reader moves:
+// choosing a view, a family, a path, a stage or a link leaves it chosen and
+// in the address, and a link that names a depth opens at it, while one that
+// names none or a depth that does not exist opens at the default.
+export function depthKeepProblems({ moves, links }, { defaultDepth }) {
+  const problems = [];
+  if ((moves ?? []).length === 0) problems.push('no move was made with a depth chosen');
+  for (const { how, want, checked, search, hidden } of moves ?? []) {
+    if (checked !== want) problems.push(`${how} leaves the depth at ${checked}, not ${want}`);
+    if (new URLSearchParams(search).get('lx-depth') !== want) problems.push(`${how} writes ${search || 'nothing'}, without lx-depth=${want}`);
+    if (!hidden) problems.push(`${how} shows what ${want} hides`);
+  }
+  if ((links ?? []).length === 0) problems.push('no link that names a depth was opened');
+  for (const { link, want, got } of links ?? []) {
+    if (got.depth !== want.depth) problems.push(`the link ${link} opens at the depth ${got.depth}, not ${want.depth}`);
+    if (want.view && got.view !== want.view) problems.push(`the link ${link} opens the ${got.view} view, not ${want.view}`);
+  }
+  if (!(links ?? []).some((one) => one.want.depth === defaultDepth && /lx-depth=/.test(one.link))) {
+    problems.push('no link that names a depth nobody defined was opened');
+  }
+  return problems;
+}
+
+// depthKeyboardProblems judges the depth choice by keyboard: Tab from the
+// heading reaches it first, and the arrow keys choose the depth before and
+// after, which applies at once and is written to the address.
+export function depthKeyboardProblems(reading) {
+  const problems = [];
+  if (!reading.reached) problems.push('Tab from the heading does not reach the depth choice');
+  if (!reading.back) problems.push('the arrow key does not choose the shallower depth');
+  if (!reading.applied) problems.push('a depth chosen by keyboard does not hide what it hides');
+  if (!reading.written) problems.push('a depth chosen by keyboard is not written to the address');
+  if (!reading.forward) problems.push('the arrow key does not choose the deeper depth again');
+  return problems;
+}
+
 function selftest() {
   const stage = (id, title, objects, extra = {}) => ({
     id,
@@ -3163,6 +3429,191 @@ function selftest() {
     refuses(name, inPlaceProblems(spoiled), want);
   }
 
+  // The depths: the model, what the page tags, what each depth shows, the
+  // address, what a move keeps, and the keyboard.
+  const depthFixture = {
+    depths: [
+      { id: 'overview', label: 'Overview', text: 'Less.' },
+      { id: 'product', label: 'Product', text: 'More.' },
+      { id: 'implementation', label: 'Implementation', text: 'All.' },
+    ],
+    defaultDepth: 'implementation',
+    depthOf: {
+      stage: { lead: 'overview', you: 'overview', done: 'overview', phase: 'product', operator: 'product', expect: 'product', inspect: 'product', limits: 'product', kubernetes: 'implementation', executor: 'implementation', objects: 'implementation' },
+      object: { purpose: 'overview', writer: 'overview', inspect: 'product', lives: 'implementation' },
+      source: { establishes: 'overview', cannot: 'overview', records: 'product', readers: 'product', retention: 'product', survives: 'product', names: 'product', gaps: 'product', ids: 'implementation' },
+      node: { holds: 'overview', writtenBy: 'overview', change: 'product', deletion: 'product', inspect: 'product', gap: 'product', operator: 'implementation', scope: 'implementation' },
+      wstage: { goal: 'overview', person: 'overview', gate: 'overview', done: 'overview', operator: 'product', inspect: 'product', decision: 'product', limits: 'product', objects: 'implementation' },
+      block: { auditMeasured: 'product', auditIdentities: 'product', auditGaps: 'product', workflowPreconditions: 'product', workflowDecisions: 'product', workflowRecord: 'implementation' },
+    },
+  };
+  const withDepthOf = (kind, change) => ({ ...depthFixture, depthOf: { ...depthFixture.depthOf, [kind]: { ...depthFixture.depthOf[kind], ...change } } });
+  const withoutPart = (kind, name) => {
+    const { [name]: dropped, ...rest } = depthFixture.depthOf[kind];
+    return { ...depthFixture, depthOf: { ...depthFixture.depthOf, [kind]: rest } };
+  };
+  if (depthModelProblems(depthFixture).length !== 0) fail('depthModelProblems refused depths that hold', depthModelProblems(depthFixture));
+  // The page's own model is held to the same rule.
+  if (depthModelProblems({ depths, defaultDepth, depthOf }).length !== 0) fail('the explorer’s depths', depthModelProblems({ depths, defaultDepth, depthOf }));
+  for (const [name, spoiled, want] of [
+    ['a depth missing', { ...depthFixture, depths: depthFixture.depths.slice(0, 2) }, 'the depths are overview, product, not overview, product, implementation'],
+    ['depths out of order', { ...depthFixture, depths: [...depthFixture.depths].reverse() }, 'the depths are implementation, product, overview'],
+    ['a depth that says nothing', { ...depthFixture, depths: [depthFixture.depths[0], { id: 'product', label: 'Product', text: ' ' }, depthFixture.depths[2]] }, 'the depth "product" lacks its label'],
+    ['a shallower default', { ...depthFixture, defaultDepth: 'product' }, 'the default depth is "product", not "implementation"'],
+    ['a kind left out', (() => { const { node, ...rest } = depthFixture.depthOf; return { ...depthFixture, depthOf: rest }; })(), 'depthOf leaves out the kind "node"'],
+    ['a kind nothing renders', { ...depthFixture, depthOf: { ...depthFixture.depthOf, chart: { bars: 'overview' } } }, 'depthOf names the kind "chart", which nothing renders'],
+    ['a part left out', withoutPart('stage', 'limits'), 'depthOf.stage leaves out the part "limits"'],
+    ['a part nothing renders', withDepthOf('object', { colour: 'product' }), 'depthOf.object names "colour", which nothing renders'],
+    ['a part at no depth', withDepthOf('source', { ids: 'deep' }), 'depthOf.source.ids is "deep", which is not a depth'],
+    ['a stage that hides who acts', withDepthOf('stage', { lead: 'product' }), 'depthOf.stage.lead first shows at "product"'],
+    ['a stage that hides when it is done', withDepthOf('stage', { done: 'implementation' }), 'depthOf.stage.done first shows at "implementation"'],
+    ['a source that hides what it cannot establish', withDepthOf('source', { cannot: 'product' }), 'depthOf.source.cannot first shows at "product"'],
+    ['a workflow stage that hides its gate', withDepthOf('wstage', { gate: 'product' }), 'depthOf.wstage.gate first shows at "product"'],
+    ['a kind that adds nothing at a depth', withDepthOf('object', { lives: 'product' }), 'depthOf.object shows nothing first at "implementation"'],
+  ]) {
+    refuses(name, depthModelProblems(spoiled), want);
+  }
+
+  const depthStage = { id: 's1', lead: 'executor', actors: { you: 'Y.', operator: 'O.', executor: 'E.' }, expect: 'X.', limits: '' };
+  if (expectedParts('stage', depthStage, 'app').join(' ') !== 'done expect inspect lead objects operator phase you') {
+    fail('expectedParts read a stage as', expectedParts('stage', depthStage, 'app'));
+  }
+  const depthSource = { id: 'a-one' };
+  const depthContext = { identities: [{ recordedIn: ['a-one'] }], gaps: [{ sources: ['a-two'] }] };
+  if (expectedParts('source', depthSource, 'app', depthContext).includes('gaps') || !expectedParts('source', depthSource, 'app', depthContext).includes('names')) {
+    fail('expectedParts read a source panel as', expectedParts('source', depthSource, 'app', depthContext));
+  }
+  if (expectedParts('source', depthSource, 'text', depthContext).includes('names')) fail('expectedParts gave the text a source’s names', []);
+  const depthEntries = { stage: [depthStage], source: [depthSource] };
+  const tagged = (where, kind, entry) => ({
+    where,
+    kind,
+    id: entry.id,
+    parts: expectedParts(kind, entry, where, depthContext).map((name) => [name, depthFixture.depthOf[kind][name]]),
+  });
+  const depthRendered = {
+    entries: ['app', 'text'].flatMap((where) => [tagged(where, 'stage', depthStage), tagged(where, 'source', depthSource)]),
+    blocks: ['app', 'text'].flatMap((where) => Object.entries(depthFixture.depthOf.block).map(([name, at]) => ({ where, name, at }))),
+    strays: [],
+  };
+  const renderContext = { depthOf: depthFixture.depthOf, entries: depthEntries, context: depthContext };
+  if (depthRenderProblems(depthRendered, renderContext).length !== 0) fail('depthRenderProblems refused tags that hold', depthRenderProblems(depthRendered, renderContext));
+  const spoilEntry = (where, kind, change) => ({
+    ...depthRendered,
+    entries: depthRendered.entries.map((one) => (one.where === where && one.kind === kind ? { ...one, ...change(one) } : one)),
+  });
+  for (const [name, spoiled, want] of [
+    ['an entry rendered without its parts', { ...depthRendered, entries: depthRendered.entries.filter((one) => !(one.where === 'text' && one.kind === 'stage')) }, 'the text’s stage "s1" is not rendered with its parts'],
+    ['a part left untagged', spoilEntry('app', 'stage', (one) => ({ parts: one.parts.filter(([part]) => part !== 'expect') })), 'carries the parts done, inspect, lead, objects, operator, phase, you, not done, expect,'],
+    ['the lead tagged as its actor', spoilEntry('app', 'stage', (one) => ({ parts: one.parts.map(([part, at]) => (part === 'lead' ? ['executor', 'implementation'] : [part, at])) })), 'carries the parts done, executor, expect'],
+    ['a part tagged at another depth', spoilEntry('text', 'stage', (one) => ({ parts: one.parts.map(([part, at]) => (part === 'done' ? [part, 'product'] : [part, at])) })), 'shows done at "product", not "overview"'],
+    ['a source’s names put in the text', spoilEntry('text', 'source', (one) => ({ parts: [...one.parts, ['names', 'product']] })), 'the text’s source "a-one" carries the parts cannot, establishes, ids, names'],
+    ['a block left untagged', { ...depthRendered, blocks: depthRendered.blocks.filter((one) => !(one.where === 'text' && one.name === 'workflowRecord')) }, 'the text does not tag the block "workflowRecord"'],
+    ['a block at another depth', { ...depthRendered, blocks: depthRendered.blocks.map((one) => (one.name === 'auditGaps' && one.where === 'app' ? { ...one, at: 'overview' } : one)) }, 'block "auditGaps" shows at "overview", not "product"'],
+    ['a part outside any entry', { ...depthRendered, strays: ['stage:done'] }, 'a part "stage:done" sits outside any entry or block'],
+  ]) {
+    refuses(name, depthRenderProblems(spoiled, renderContext), want);
+  }
+
+  const ids = depthFixture.depths.map((one) => one.id);
+  const shownAt = (depth) => ({
+    depth,
+    checked: depth,
+    notes: [depth],
+    parts: [
+      ['app', 'stage:done', 'overview', true],
+      ['app', 'stage:phase', 'product', rankOf(ids, depth) >= 1],
+      ['text', 'stage:objects', 'implementation', rankOf(ids, depth) >= 2],
+    ],
+    open: [{ kind: 'stage', id: 's1', parts: ['done', ...(rankOf(ids, depth) >= 1 ? ['phase'] : [])], want: [['done', 'overview'], ['phase', 'product']] }],
+    textShown: true,
+    links: 3,
+    hiddenTargets: [],
+  });
+  const shownThatHold = ids.map(shownAt);
+  if (depthShownProblems(shownThatHold, { ids, where: 'with its script' }).length !== 0) {
+    fail('depthShownProblems refused depths that hold', depthShownProblems(shownThatHold, { ids, where: 'with its script' }));
+  }
+  const spoilShown = (depth, change) => shownThatHold.map((one) => (one.depth === depth ? { ...one, ...change(one) } : one));
+  for (const [name, spoiled, want] of [
+    ['a depth never chosen', shownThatHold.slice(1), 'the depth "overview" was never chosen'],
+    ['a choice that reads another depth', spoilShown('product', () => ({ checked: 'implementation' })), 'the choice reads "implementation"'],
+    ['two notes at once', spoilShown('overview', () => ({ notes: ['overview', 'product'] })), 'the notes shown are overview, product'],
+    ['no note', spoilShown('overview', () => ({ notes: [] })), 'the notes shown are none'],
+    ['nothing read', spoilShown('overview', () => ({ parts: [] })), 'no part was read'],
+    ['a deeper part shown', spoilShown('overview', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:phase' ? [...p.slice(0, 3), true] : p)) })), '1 app stage:phase part(s) are shown'],
+    ['a part hidden at its own depth', spoilShown('product', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:phase' ? [...p.slice(0, 3), false] : p)) })), '1 app stage:phase part(s) are hidden'],
+    ['an essential hidden', spoilShown('overview', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:done' ? [...p.slice(0, 3), false] : p)) })), '1 app stage:done part(s) are hidden'],
+    ['a panel on screen that hides its own part', spoilShown('product', (one) => ({ open: [{ ...one.open[0], parts: ['done'] }] })), 'the stage "s1" on screen shows done, not done, phase'],
+    ['a text link to a hidden part', spoilShown('overview', () => ({ hiddenTargets: ['#lx-text-w-dec-schema'] })), 'the link #lx-text-w-dec-schema leads to a part this depth hides'],
+    ['no text link read', spoilShown('product', () => ({ links: 0 })), 'at product: no link of the text was read'],
+  ]) {
+    refuses(name, depthShownProblems(spoiled, { ids, where: 'with its script' }), want);
+  }
+  for (const [name, spoiled, want] of [
+    ['the text off screen without the script', spoilShown('overview', () => ({ textShown: false })), 'without its script at overview: the text is not on screen'],
+  ]) {
+    refuses(name, depthShownProblems(spoiled, { ids, where: 'without its script', text: true }), want);
+  }
+  if (depthShownProblems(shownThatHold, { ids, where: 'without its script', text: true }).length !== 0) {
+    fail('depthShownProblems refused a text that holds', depthShownProblems(shownThatHold, { ids, where: 'without its script', text: true }));
+  }
+
+  const addressThatHolds = [
+    { depth: 'overview', before: '?lx-stage=plan&lx-object=job', search: '?lx-stage=plan&lx-object=job&lx-depth=overview' },
+    { depth: 'product', before: '?lx-stage=plan&lx-object=job&lx-depth=overview', search: '?lx-stage=plan&lx-object=job&lx-depth=product' },
+    { depth: 'implementation', before: '?lx-stage=plan&lx-object=job&lx-depth=product', search: '?lx-stage=plan&lx-object=job' },
+  ];
+  const addressContext = { ids, defaultDepth: 'implementation' };
+  if (depthAddressProblems(addressThatHolds, addressContext).length !== 0) fail('depthAddressProblems refused addresses that hold', depthAddressProblems(addressThatHolds, addressContext));
+  const spoilAddress = (index, change) => addressThatHolds.map((one, at) => (at === index ? { ...one, ...change } : one));
+  for (const [name, spoiled, want] of [
+    ['a depth not written', spoilAddress(0, { search: '?lx-stage=plan&lx-object=job' }), 'choosing overview writes ?lx-stage=plan&lx-object=job, with lx-depth absent, not overview'],
+    ['the default written', spoilAddress(2, { search: '?lx-stage=plan&lx-object=job&lx-depth=implementation' }), 'with lx-depth implementation, not absent'],
+    ['a depth that resets the stage', spoilAddress(1, { search: '?lx-depth=product' }), 'changes the rest of the address from ?lx-stage=plan&lx-object=job to ?'],
+    ['no depth chosen', [], 'no depth was chosen in the interactive view'],
+    ['a depth never chosen by click', addressThatHolds.slice(0, 2), 'the depth "implementation" was never chosen in the interactive view'],
+  ]) {
+    refuses(name, depthAddressProblems(spoiled, addressContext), want);
+  }
+
+  const keepThatHolds = {
+    moves: [{ how: 'choosing the audit view', want: 'overview', checked: 'overview', search: '?lx-view=audit&lx-depth=overview', hidden: true }],
+    links: [
+      { link: '?lx-depth=product', want: { depth: 'product' }, got: { depth: 'product', view: 'journey' } },
+      { link: '?lx-view=audit&lx-depth=overview', want: { depth: 'overview', view: 'audit' }, got: { depth: 'overview', view: 'audit' } },
+      { link: '?lx-depth=deep', want: { depth: 'implementation' }, got: { depth: 'implementation', view: 'journey' } },
+    ],
+  };
+  const keepContext = { defaultDepth: 'implementation' };
+  if (depthKeepProblems(keepThatHolds, keepContext).length !== 0) fail('depthKeepProblems refused moves that hold', depthKeepProblems(keepThatHolds, keepContext));
+  const spoilMove = (change) => ({ ...keepThatHolds, moves: [{ ...keepThatHolds.moves[0], ...change }] });
+  const spoilLink = (index, change) => ({ ...keepThatHolds, links: keepThatHolds.links.map((one, at) => (at === index ? { ...one, got: { ...one.got, ...change } } : one)) });
+  for (const [name, spoiled, want] of [
+    ['a view that resets the depth', spoilMove({ checked: 'implementation' }), 'choosing the audit view leaves the depth at implementation, not overview'],
+    ['a view that drops it from the address', spoilMove({ search: '?lx-view=audit' }), 'writes ?lx-view=audit, without lx-depth=overview'],
+    ['a move that shows what the depth hides', spoilMove({ hidden: false }), 'choosing the audit view shows what overview hides'],
+    ['no move made', { ...keepThatHolds, moves: [] }, 'no move was made with a depth chosen'],
+    ['a link whose depth is ignored', spoilLink(0, { depth: 'implementation' }), 'the link ?lx-depth=product opens at the depth implementation, not product'],
+    ['a link whose view is dropped', spoilLink(1, { view: 'journey' }), 'opens the journey view, not audit'],
+    ['an unknown depth taken', spoilLink(2, { depth: 'overview' }), 'the link ?lx-depth=deep opens at the depth overview, not implementation'],
+    ['no unknown depth tried', { ...keepThatHolds, links: keepThatHolds.links.slice(0, 2) }, 'no link that names a depth nobody defined was opened'],
+  ]) {
+    refuses(name, depthKeepProblems(spoiled, keepContext), want);
+  }
+
+  const depthKeys = { reached: true, back: true, applied: true, written: true, forward: true };
+  if (depthKeyboardProblems(depthKeys).length !== 0) fail('depthKeyboardProblems refused keys that hold', depthKeyboardProblems(depthKeys));
+  for (const [key, want] of [
+    ['reached', 'Tab from the heading does not reach the depth choice'],
+    ['back', 'does not choose the shallower depth'],
+    ['applied', 'does not hide what it hides'],
+    ['written', 'is not written to the address'],
+    ['forward', 'does not choose the deeper depth again'],
+  ]) {
+    refuses(`a depth choice whose ${key} fails`, depthKeyboardProblems({ ...depthKeys, [key]: false }), want);
+  }
+
   // The CRDs this tree ships are read, every one of them.
   const read = crdKinds();
   if (read.length === 0 || read.some((one) => !one.kind || !one.scope)) fail('crdKinds read the CRDs as', read);
@@ -3175,7 +3626,8 @@ function selftest() {
       'map: its model against the CRDs, its owner references, its text, each object and its marks, its links and its keyboard, ' +
       'the composed workflow: its model against #817, its text, its view, every stage and stop, how a stop clears, its links ' +
       'and its keyboard, and the links between objects, sources and views: their addresses, where each lands and how a click ' +
-      'follows it)',
+      'follows it, and the depths: their model, the parts each entry carries, what each depth shows with and without the ' +
+      'script, the address, what a move keeps, and the keyboard)',
   );
 }
 
@@ -3550,6 +4002,10 @@ async function measureNarrow(browser, url, models, auditModel, map, flow) {
         await open(page, url, { scripted: javaScriptEnabled });
         if (!javaScriptEnabled) {
           readings.push(await readOverflow(page, `${at}, without JavaScript`));
+          for (const { id } of depths.slice(0, -1)) {
+            await chooseDepth(page, id);
+            readings.push(await readOverflow(page, `${at}, without JavaScript at the depth ${id}`));
+          }
           continue;
         }
         if ((await page.locator(VISIBLE_STEP).count()) === 0) {
@@ -3604,6 +4060,15 @@ async function measureNarrow(browser, url, models, auditModel, map, flow) {
           for (const { outcome } of stage.outcomes) {
             await chooseStop(page, outcome);
             readings.push(await readOverflow(page, `${at}, workflow at ${stage.id} stopped by ${outcome}`));
+          }
+        }
+        // Each shallower depth reflows what is left; the deepest is every
+        // reading above.
+        for (const { id } of depths.slice(0, -1)) {
+          await chooseDepth(page, id);
+          for (const view of ['journey', 'audit', 'objects', 'workflow']) {
+            await chooseView(page, view);
+            readings.push(await readOverflow(page, `${at}, ${view} at the depth ${id}`));
           }
         }
       } finally {
@@ -4376,6 +4841,260 @@ async function measureAnchors(browser, url, models, flow) {
   }
 }
 
+// The entries each depth is read on, the content they come from and the
+// identities and gaps a source panel names.
+const depthEntries = () => ({
+  stage: families.flatMap((family) => [...family.scenario.stages, ...family.paths.flatMap((path) => path.stages ?? [])]),
+  object: families.flatMap((family) => family.objects),
+  source: audit.sources,
+  node: objectMap.nodes,
+  wstage: workflow.stages,
+});
+const depthContext = () => ({ identities: audit.identities, gaps: audit.gaps });
+
+// Every tagged part of the page, by the entry or block it belongs to: an
+// entry is a panel of the interactive view or an entry of the text, and a
+// part of another kind inside it, or outside every entry and block, is a
+// stray.
+const readDepthTags = (page) =>
+  page.evaluate(() => {
+    const root = document.getElementById('lifecycle-explorer');
+    const app = root.querySelector('[data-lx-app]');
+    const text = root.querySelector('[data-lx-text]');
+    const kinds = [
+      ['stage', '[data-lx-stage-panel]', 'lxStagePanel', '[data-lx-text-stage]', 'lxTextStage'],
+      ['object', '[data-lx-object-panel]', 'lxObjectPanel', '[data-lx-text-object]', 'lxTextObject'],
+      ['source', '[data-lx-source-panel]', 'lxSourcePanel', '[data-lx-text-source]', 'lxTextSource'],
+      ['node', '[data-lx-node-panel]', 'lxNodePanel', '[data-lx-text-node]', 'lxTextNode'],
+      ['wstage', '[data-lx-wstage-panel]', 'lxWstagePanel', '[data-lx-text-wstage]', 'lxTextWstage'],
+    ];
+    const claimed = new Set();
+    const entries = [];
+    for (const [kind, appSelector, appKey, textSelector, textKey] of kinds) {
+      for (const [where, scope, selector, key] of [
+        ['app', app, appSelector, appKey],
+        ['text', text, textSelector, textKey],
+      ]) {
+        for (const element of scope.querySelectorAll(selector)) {
+          const parts = [...element.querySelectorAll(`[data-lx-part^="${kind}:"]`)];
+          for (const one of parts) claimed.add(one);
+          entries.push({
+            where,
+            kind,
+            id: element.dataset[key],
+            parts: parts.map((one) => [one.dataset.lxPart.slice(kind.length + 1), one.dataset.lxDepth]),
+          });
+        }
+      }
+    }
+    const blocks = [...root.querySelectorAll('[data-lx-part^="block:"]')].map((one) => {
+      claimed.add(one);
+      return { where: app.contains(one) ? 'app' : 'text', name: one.dataset.lxPart.slice('block:'.length), at: one.dataset.lxDepth };
+    });
+    const strays = [...root.querySelectorAll('[data-lx-part]')].filter((one) => !claimed.has(one)).map((one) => one.dataset.lxPart);
+    return { entries, blocks, strays };
+  });
+
+// What one depth shows: the choice, the note shown, every tagged part with
+// whether its own style hides it, the parts of each entry open on screen,
+// and, where the text is on screen, the links of it whose target the depth
+// hides.
+const readDepthShown = (page, opened) =>
+  page.evaluate((opened) => {
+    const root = document.getElementById('lifecycle-explorer');
+    const app = root.querySelector('[data-lx-app]');
+    const text = root.querySelector('[data-lx-text]');
+    const onScreen = (element) => element.getClientRects().length > 0;
+    return {
+      checked: root.querySelector('[data-lx-depth-choice]:checked')?.value ?? null,
+      notes: [...root.querySelectorAll('[data-lx-depth-note]')]
+        .filter((note) => getComputedStyle(note).display !== 'none')
+        .map((note) => note.dataset.lxDepthNote),
+      parts: [...root.querySelectorAll('[data-lx-part]')].map((one) => [
+        app.contains(one) ? 'app' : 'text',
+        one.dataset.lxPart,
+        one.dataset.lxDepth,
+        getComputedStyle(one).display !== 'none',
+      ]),
+      open: opened.map(({ kind, selector, key }) => {
+        const element = [...root.querySelectorAll(selector)].find(onScreen);
+        if (!element) return { kind, id: `none on screen for ${selector}`, parts: [], want: [['an entry', 'overview']] };
+        const tagged = [...element.querySelectorAll(`[data-lx-part^="${kind}:"]`)];
+        return {
+          kind,
+          id: element.dataset[key],
+          parts: tagged.filter(onScreen).map((one) => one.dataset.lxPart.slice(kind.length + 1)),
+          want: tagged.map((one) => [one.dataset.lxPart.slice(kind.length + 1), one.dataset.lxDepth]),
+        };
+      }),
+      textShown: onScreen(text),
+      links: [...text.querySelectorAll('a[href^="#"]')].filter(onScreen).length,
+      hiddenTargets: [...text.querySelectorAll('a[href^="#"]')]
+        .filter(onScreen)
+        .filter((link) => {
+          const target = document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+          return target && text.contains(target) && !onScreen(target);
+        })
+        .map((link) => link.getAttribute('href')),
+    };
+  }, opened);
+
+const chooseDepth = (page, id) => page.locator(`${ROOT} [data-lx-depth-choice][value="${id}"]`).check();
+const readDepth = (page) => page.evaluate(() => document.querySelector('#lifecycle-explorer [data-lx-depth-choice]:checked')?.value ?? null);
+
+// The panels a depth is read on in the interactive view, and the entries it
+// is read on in the text.
+const APP_OPENED = [
+  { kind: 'stage', selector: '[data-lx-stage-panel]', key: 'lxStagePanel' },
+  { kind: 'object', selector: '[data-lx-object-panel]', key: 'lxObjectPanel' },
+];
+const VIEW_OPENED = {
+  audit: [{ kind: 'source', selector: '[data-lx-source-panel]', key: 'lxSourcePanel' }],
+  objects: [{ kind: 'node', selector: '[data-lx-node-panel]', key: 'lxNodePanel' }],
+  workflow: [{ kind: 'wstage', selector: '[data-lx-wstage-panel]', key: 'lxWstagePanel' }],
+};
+const TEXT_OPENED = [
+  { kind: 'stage', selector: '[data-lx-text-stage]', key: 'lxTextStage' },
+  { kind: 'object', selector: '[data-lx-text-object]', key: 'lxTextObject' },
+  { kind: 'source', selector: '[data-lx-text-source]', key: 'lxTextSource' },
+  { kind: 'node', selector: '[data-lx-text-node]', key: 'lxTextNode' },
+  { kind: 'wstage', selector: '[data-lx-text-wstage]', key: 'lxTextWstage' },
+];
+
+// The depths, driven with the script: the tags read once; each depth chosen
+// on a stage and an object of the journey, a source, an object of the map and
+// a workflow stage, each read for what it shows and the address it writes;
+// the depth kept through every kind of move; links that name a depth; and
+// the keyboard.
+async function measureDepths(browser, url) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  try {
+    await open(page, url);
+    const tags = await readDepthTags(page);
+
+    // The stage of the default path that carries the most parts, so each
+    // depth hides something in it.
+    const [first] = families;
+    const stage = [...first.scenario.stages].sort(
+      (left, right) => expectedParts('stage', right, 'app').length - expectedParts('stage', left, 'app').length,
+    )[0];
+    const object = first.objects.find((one) => stage.objects.includes(one.id)) ?? first.objects[0];
+    const node = objectMap.nodes.find((one) => one.gap) ?? objectMap.nodes[0];
+    const source = audit.sources.find((one) => audit.identities.some((identity) => identity.recordedIn.includes(one.id))) ?? audit.sources[0];
+    const wstage = workflow.stages.find((one) => one.decision && one.limits) ?? workflow.stages[0];
+    const states = [
+      { search: `?lx-stage=${stage.id}&lx-object=${object.id}`, opened: APP_OPENED },
+      { search: `?lx-view=audit&lx-source=${source.id}`, opened: VIEW_OPENED.audit },
+      { search: `?lx-view=objects&lx-node=${node.id}`, opened: VIEW_OPENED.objects },
+      { search: `?lx-view=workflow&lx-step=${wstage.id}`, opened: VIEW_OPENED.workflow },
+    ];
+    const shown = [];
+    const address = [];
+    for (const state of states) {
+      await open(page, `${url}${state.search}`);
+      for (const id of depths.map((one) => one.id)) {
+        const before = await page.evaluate(() => location.search);
+        await chooseDepth(page, id);
+        const search = await page.evaluate(() => location.search);
+        if (state === states[0]) address.push({ depth: id, before, search });
+        shown.push({ depth: id, ...(await readDepthShown(page, state.opened)) });
+      }
+    }
+
+    // Every kind of move with Overview chosen. What it hides has to stay
+    // hidden wherever the move lands.
+    const [shallow] = depths;
+    const moves = [];
+    const keep = async (how) => {
+      const got = await page.evaluate(() => ({
+        search: location.search,
+        hidden: [...document.querySelectorAll('#lifecycle-explorer [data-lx-depth="product"], #lifecycle-explorer [data-lx-depth="implementation"]')].every(
+          (one) => getComputedStyle(one).display === 'none',
+        ),
+      }));
+      moves.push({ how, want: shallow.id, checked: await readDepth(page), ...got });
+    };
+    await open(page, url);
+    await chooseDepth(page, shallow.id);
+    for (const view of ['audit', 'objects', 'workflow', 'journey']) {
+      await chooseView(page, view);
+      await keep(`choosing the ${view} view`);
+    }
+    const other = families.at(-1);
+    await page.locator(`${ROOT} [data-lx-family="${other.id}"]`).click();
+    await keep('choosing another family');
+    const turned = other.paths.find((path) => path.turnsAfter);
+    await page.locator(`${VIEW} [data-lx-path="${turned.id}"]`).click();
+    await keep('choosing a path');
+    await page.locator(VISIBLE_STEP).nth(1).click();
+    await keep('choosing a stage');
+    await page.locator(`${VIEW} [data-lx-object]`).first().click();
+    await page.locator(`${VIEW} [data-lx-object-panel]:not([hidden]) a[data-lx-select]`).first().click();
+    await keep('following a related object');
+    await chooseView(page, 'workflow');
+    const stopped = workflow.stages.find((one) => one.outcomes.some((outcome) => outcome.journey));
+    const stop = stopped.outcomes.find((outcome) => outcome.journey);
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstep="${stopped.id}"]`).click();
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) [data-lx-woutcome="${stop.outcome}"]`).click();
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstop]:not([hidden]) a[data-lx-open]`).first().click();
+    await keep('following a link into another view');
+
+    const links = [];
+    for (const one of [
+      { link: '?lx-depth=product', want: { depth: 'product' } },
+      { link: `?lx-view=audit&lx-depth=${shallow.id}`, want: { depth: shallow.id, view: 'audit' } },
+      { link: '?lx-depth=deep', want: { depth: defaultDepth } },
+      { link: `?lx-depth=${defaultDepth}`, want: { depth: defaultDepth } },
+    ]) {
+      await open(page, `${url}${one.link}`);
+      links.push({ ...one, got: { depth: await readDepth(page), view: (await readViews(page)).view } });
+    }
+
+    const keyboard = { reached: false, back: false, applied: false, written: false, forward: false };
+    await open(page, url);
+    await focusHeading(page);
+    // The first stop inside the explorer is the depth chosen.
+    keyboard.reached = (await tabTo(page, `${ROOT} *`, 20)) && (await activeMatches(page, `${ROOT} [data-lx-depth-choice]:checked`));
+    if (keyboard.reached) {
+      await page.keyboard.press('ArrowLeft');
+      const back = depths.at(-2).id;
+      keyboard.back = (await readDepth(page)) === back;
+      keyboard.applied = await page.evaluate(
+        () => [...document.querySelectorAll('#lifecycle-explorer [data-lx-depth="implementation"]')].every((one) => getComputedStyle(one).display === 'none'),
+      );
+      keyboard.written = new URLSearchParams(await page.evaluate(() => location.search)).get('lx-depth') === back;
+      await page.keyboard.press('ArrowRight');
+      keyboard.forward = (await readDepth(page)) === defaultDepth && !(await page.evaluate(() => location.search)).includes('lx-depth');
+    }
+
+    return { tags, shown, address, keep: { moves, links }, keyboard, thrown };
+  } finally {
+    await context.close();
+  }
+}
+
+// The depths without the script: the choice is the radio buttons alone, and
+// the styles have to hide the same parts of the text. Read at rest, then at
+// each depth chosen.
+async function measureDepthsWithoutScript(browser, url) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, javaScriptEnabled: false });
+  const page = await context.newPage();
+  try {
+    await open(page, url, { scripted: false });
+    const readings = [{ depth: defaultDepth, ...(await readDepthShown(page, TEXT_OPENED)) }];
+    for (const id of depths.map((one) => one.id)) {
+      await chooseDepth(page, id);
+      readings.push({ depth: id, ...(await readDepthShown(page, TEXT_OPENED)) });
+    }
+    return readings;
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (process.argv.includes('--selftest')) {
     selftest();
@@ -4387,6 +5106,7 @@ async function main() {
   problems.push(...auditProblems(audit, models));
   problems.push(...objectMapProblems(objectMap, { kinds: crdKinds(), familyModels: models, auditModel: audit }));
   problems.push(...workflowProblems(workflow, { familyModels: models, auditModel: audit, map: objectMap, kinds: crdKinds() }));
+  problems.push(...depthModelProblems({ depths, defaultDepth, depthOf }));
   problems.push(...commandProblems(explorerCommands(families, audit, objectMap, workflow)));
   if (models[0]?.id !== defaultFamily) problems.push(`the default family is "${defaultFamily}", not the first family "${models[0]?.id}"`);
 
@@ -4416,6 +5136,7 @@ async function main() {
   const url = `http://127.0.0.1:${port}${base}/${PAGE}`;
   const browser = await chromium.launch();
   let anchors = { links: 0, text: 0 };
+  let tagged = 0;
 
   try {
     const quiet = await measureWithoutScript(browser, url);
@@ -4462,6 +5183,16 @@ async function main() {
         problems.push(...inPlaceProblems(linked.clicks));
         if (linked.thrown.length > 0) problems.push(`following the links threw: ${linked.thrown.join('; ')}`);
         anchors = { links: linked.landing.length, text: linked.reading.anchors.text.length };
+        const deep = await measureDepths(browser, url);
+        const ids = depths.map((one) => one.id);
+        problems.push(...depthRenderProblems(deep.tags, { depthOf, entries: depthEntries(), context: depthContext() }));
+        problems.push(...depthShownProblems(deep.shown, { ids, where: 'with its script' }));
+        problems.push(...depthAddressProblems(deep.address, { ids, defaultDepth }));
+        problems.push(...depthKeepProblems(deep.keep, { defaultDepth }));
+        problems.push(...depthKeyboardProblems(deep.keyboard));
+        if (deep.thrown.length > 0) problems.push(`the depths threw: ${deep.thrown.join('; ')}`);
+        problems.push(...depthShownProblems(await measureDepthsWithoutScript(browser, url), { ids, where: 'without its script', text: true }));
+        tagged = deep.tags.entries.reduce((sum, one) => sum + one.parts.length, 0) + deep.tags.blocks.length;
       }
       problems.push(...overflowProblems(await measureNarrow(browser, url, models, audit, objectMap, workflow)));
     }
@@ -4484,7 +5215,8 @@ async function main() {
       `the object map's ${objectMap.nodes.length} objects and ${objectMap.relations.length} relationships against ` +
       `${crdKinds().length} CRD kinds, the composed workflow's ${workflow.stages.length} stages and ` +
       `${workflow.stages.reduce((sum, stage) => sum + stage.outcomes.length, 0)} stops, ${anchors.links} linked addresses and ` +
-      `${anchors.text} links in the text, ${explorerCommands(families, audit, objectMap, workflow).length} commands, and ` +
+      `${anchors.text} links in the text, ${tagged} parts at ${depths.length} depths, ` +
+      `${explorerCommands(families, audit, objectMap, workflow).length} commands, and ` +
       `${NARROW.map((one) => `${one.width}px`).join(' and ')} wide)`,
   );
 }

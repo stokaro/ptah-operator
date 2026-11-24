@@ -28,8 +28,104 @@
 // The audit view, the object map and the composed workflow, at the end, are
 // not scenarios: each covers both families, the audit view read by evidence
 // source, the object map by object, and the composed workflow as the stages
-// of one larger change that uses both. The depth levels are a later slice of
-// #817.
+// of one larger change that uses both.
+//
+// A depth says how much of each entry a reader sees, and `depthOf`, below,
+// names the depth each part of an entry first shows at. Every depth reads
+// the same entries, so a shallower one says less and never something else.
+
+// How much an entry says. Each depth shows everything the one before it
+// shows, and more. Implementation is every part, which is what the page
+// showed before there were depths, so a link that names no depth keeps
+// showing it.
+export const depths = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    text: 'Who acts at each step and what that step is for, what each object or source is, and how you know a step is done.',
+  },
+  {
+    id: 'product',
+    label: 'Product',
+    text: 'Adds the phase and the state to expect, the commands that act or inspect, the decisions, what a step does not prove, and what a change, a deletion or a loss leaves.',
+  },
+  {
+    id: 'implementation',
+    label: 'Implementation',
+    text: 'Adds what Kubernetes, the operator and the executor each do underneath, the objects each step touches, where each object lives, and the identifiers that join the record.',
+  },
+];
+export const defaultDepth = 'implementation';
+
+// The depth each part of an entry first shows at: a stage of the change
+// journey, an object of a family, an audit source, an object of the object
+// map, a stage of the composed workflow, and the blocks of a view that are
+// not one entry. An actor's text in a stage shows at `lead` when that actor
+// leads the stage, and at its own depth otherwise, so every stage says who
+// acts at every depth. A part not named here, such as a title, a
+// relationship, a choice that moves the reader on or a link to the
+// reference, shows at every depth.
+export const depthOf = {
+  stage: {
+    lead: 'overview',
+    you: 'overview',
+    done: 'overview',
+    phase: 'product',
+    operator: 'product',
+    expect: 'product',
+    inspect: 'product',
+    limits: 'product',
+    kubernetes: 'implementation',
+    executor: 'implementation',
+    objects: 'implementation',
+  },
+  object: {
+    purpose: 'overview',
+    writer: 'overview',
+    inspect: 'product',
+    lives: 'implementation',
+  },
+  source: {
+    establishes: 'overview',
+    cannot: 'overview',
+    records: 'product',
+    readers: 'product',
+    retention: 'product',
+    survives: 'product',
+    names: 'product',
+    gaps: 'product',
+    ids: 'implementation',
+  },
+  node: {
+    holds: 'overview',
+    writtenBy: 'overview',
+    change: 'product',
+    deletion: 'product',
+    inspect: 'product',
+    gap: 'product',
+    operator: 'implementation',
+    scope: 'implementation',
+  },
+  wstage: {
+    goal: 'overview',
+    person: 'overview',
+    gate: 'overview',
+    done: 'overview',
+    operator: 'product',
+    inspect: 'product',
+    decision: 'product',
+    limits: 'product',
+    objects: 'implementation',
+  },
+  block: {
+    auditMeasured: 'product',
+    auditIdentities: 'product',
+    auditGaps: 'product',
+    workflowPreconditions: 'product',
+    workflowDecisions: 'product',
+    workflowRecord: 'implementation',
+  },
+};
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
