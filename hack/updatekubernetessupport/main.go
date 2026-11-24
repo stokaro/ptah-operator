@@ -15,16 +15,24 @@
 // Command updatekubernetessupport performs the live half of Kubernetes support
 // maintenance. It reads the official stable release and kind release metadata,
 // then updates the repository's deterministic support manifest and its derived
-// documentation and Helm range.
+// documentation and Helm range. When it moves kind, it also reads the load
+// balancer image the new kind version names and pins it by the index digest its
+// registry serves.
 package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +47,12 @@ import (
 const (
 	defaultStableURL       = "https://dl.k8s.io/release/stable.txt"
 	defaultKindReleasesURL = "https://api.github.com/repos/kubernetes-sigs/kind/releases?per_page=100"
+	defaultKindSourceURL   = "https://raw.githubusercontent.com/kubernetes-sigs/kind"
+	// kindLoadBalancerSource is where kind declares the image it runs as the
+	// load balancer of a cluster with more than one control plane.
+	kindLoadBalancerSource = "pkg/cluster/internal/loadbalancer/const.go"
+	dockerHubRegistry      = "docker.io"
+	dockerHubEndpoint      = "https://registry-1.docker.io"
 	manifestRelativePath   = "support/kubernetes.json"
 	chartRelativePath      = "charts/ptah-operator/Chart.yaml"
 	docsRelativePath       = "docs/site/src/content/docs/support/kubernetes.md"
@@ -54,15 +68,47 @@ var (
 	stableVersionPattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 	kindImagePattern     = regexp.MustCompile(`kindest/node:v(\d+)\.(\d+)\.(\d+)@sha256:([0-9a-f]{64})`)
 	chartRangePattern    = regexp.MustCompile(`(?m)^kubeVersion:\s*"[^"]+"\s*$`)
+	// imageReferencePattern is the registry, repository and tag the manifest's
+	// kindLoadBalancer pin carries ahead of its digest, in the grammar
+	// hack/verify-kubernetes-support.go holds the pin to.
+	imageReferencePattern = regexp.MustCompile(`^([a-z0-9-]+(?:\.[a-z0-9-]+)+(?::[0-9]+)?)/([a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})$`)
+	challengePattern      = regexp.MustCompile(`([A-Za-z]+)="([^"]*)"`)
 )
 
+// indexMediaTypes are the media types a registry serves a multi-platform image
+// as.
+var indexMediaTypes = map[string]bool{
+	"application/vnd.oci.image.index.v1+json":                   true,
+	"application/vnd.docker.distribution.manifest.list.v2+json": true,
+}
+
+// manifestAccept asks for an index and admits a single-platform manifest, so a
+// tag that names one is refused for what it is rather than as missing.
+const manifestAccept = "application/vnd.oci.image.index.v1+json, " +
+	"application/vnd.docker.distribution.manifest.list.v2+json, " +
+	"application/vnd.oci.image.manifest.v1+json, " +
+	"application/vnd.docker.distribution.manifest.v2+json"
+
+// requiredPlatforms are the platforms the acceptance harness runs kind on: the
+// CI runners and the arm64 lab hosts.
+var requiredPlatforms = []string{"linux/amd64", "linux/arm64"}
+
 type supportManifest struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Policy        string    `json:"policy"`
-	WindowSize    int       `json:"windowSize"`
-	LastVerified  string    `json:"lastVerified"`
-	KindVersion   string    `json:"kindVersion"`
-	Releases      []release `json:"releases"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Policy        string `json:"policy"`
+	WindowSize    int    `json:"windowSize"`
+	LastVerified  string `json:"lastVerified"`
+	KindVersion   string `json:"kindVersion"`
+	// KindLoadBalancer is re-pinned by refreshKindLoadBalancer whenever the
+	// plan's kindVersion is not the version the pin was read from, and is
+	// carried unchanged otherwise.
+	KindLoadBalancer kindLoadBalancerPin `json:"kindLoadBalancer"`
+	Releases         []release           `json:"releases"`
+}
+
+type kindLoadBalancerPin struct {
+	KindVersion string `json:"kindVersion"`
+	Image       string `json:"image"`
 }
 
 type release struct {
@@ -94,10 +140,23 @@ type updatePlan struct {
 	newest   string
 }
 
+// options is what one update reads from and writes to.
+type options struct {
+	repositoryRoot  string
+	stableURL       string
+	kindReleasesURL string
+	githubToken     string
+	date            time.Time
+	client          *http.Client
+	loadBalancer    loadBalancerResolver
+}
+
 func main() {
 	repositoryRoot := flag.String("repository-root", ".", "repository root to update")
 	stableURL := flag.String("stable-url", defaultStableURL, "official Kubernetes stable release URL")
 	kindReleasesURL := flag.String("kind-releases-url", defaultKindReleasesURL, "official kind GitHub releases API URL")
+	kindSourceURL := flag.String("kind-source-url", defaultKindSourceURL,
+		"raw file root of the kind repository; the load balancer image is read from <url>/<kind tag>/"+kindLoadBalancerSource)
 	dateValue := flag.String("date", "", "verification date in UTC (YYYY-MM-DD; defaults to today)")
 	flag.Parse()
 
@@ -105,42 +164,66 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-
-	manifestPath := filepath.Join(*repositoryRoot, manifestRelativePath)
-	manifest, err := readManifest(manifestPath)
-	if err != nil {
-		fatal(err)
-	}
-
 	client := &http.Client{
 		Timeout:       requestTimeout,
 		CheckRedirect: secureRedirectPolicy,
 	}
-	stableContents, err := fetch(context.Background(), client, *stableURL, "")
+	message, err := run(context.Background(), options{
+		repositoryRoot:  *repositoryRoot,
+		stableURL:       *stableURL,
+		kindReleasesURL: *kindReleasesURL,
+		githubToken:     os.Getenv("GITHUB_TOKEN"),
+		date:            verificationDate,
+		client:          client,
+		loadBalancer: loadBalancerResolver{
+			client:           client,
+			sourceURL:        *kindSourceURL,
+			registryEndpoint: registryEndpoint,
+		},
+	})
 	if err != nil {
-		fatal(fmt.Errorf("read official Kubernetes stable release: %w", err))
+		fatal(err)
 	}
-	kindContents, err := fetch(context.Background(), client, *kindReleasesURL, os.Getenv("GITHUB_TOKEN"))
+	fmt.Println(message)
+}
+
+// run reads everything an update needs before it writes anything, so a read
+// that fails leaves the repository as it was rather than half updated.
+func run(ctx context.Context, options options) (string, error) {
+	manifestPath := filepath.Join(options.repositoryRoot, manifestRelativePath)
+	manifest, err := readManifest(manifestPath)
 	if err != nil {
-		fatal(fmt.Errorf("read official kind releases: %w", err))
+		return "", err
 	}
 
-	plan, err := buildUpdatePlan(manifest, stableContents, kindContents, verificationDate)
+	stableContents, err := fetch(ctx, options.client, options.stableURL, "")
 	if err != nil {
-		fatal(err)
+		return "", fmt.Errorf("read official Kubernetes stable release: %w", err)
 	}
-	changed, err := applyUpdate(*repositoryRoot, plan)
+	kindContents, err := fetch(ctx, options.client, options.kindReleasesURL, options.githubToken)
 	if err != nil {
-		fatal(err)
+		return "", fmt.Errorf("read official kind releases: %w", err)
+	}
+
+	plan, err := buildUpdatePlan(manifest, stableContents, kindContents, options.date)
+	if err != nil {
+		return "", err
+	}
+	plan, err = refreshKindLoadBalancer(ctx, plan, options.loadBalancer)
+	if err != nil {
+		return "", err
+	}
+	changed, err := applyUpdate(options.repositoryRoot, plan)
+	if err != nil {
+		return "", err
 	}
 	if changed {
-		fmt.Printf("Updated Kubernetes support window to %s-%s with kind %s\n", plan.oldest, plan.newest, plan.manifest.KindVersion)
-		return
+		return fmt.Sprintf("Updated Kubernetes support window to %s-%s with kind %s", plan.oldest, plan.newest, plan.manifest.KindVersion), nil
 	}
 	if len(plan.manifest.Releases) == 0 {
-		fatal(errors.New("support update unexpectedly produced no releases"))
+		return "", errors.New("support update unexpectedly produced no releases")
 	}
-	fmt.Printf("Kubernetes support window is current at %s-%s with kind %s\n", plan.oldest, plan.newest, plan.manifest.KindVersion)
+	return fmt.Sprintf("Kubernetes support window is current at %s-%s with kind %s", plan.oldest, plan.newest, plan.manifest.KindVersion), nil
 }
 
 func parseDate(value string) (time.Time, error) {
@@ -156,45 +239,79 @@ func parseDate(value string) (time.Time, error) {
 }
 
 func fetch(ctx context.Context, client *http.Client, rawURL, token string) ([]byte, error) {
+	header := http.Header{}
+	header.Set("Accept", "application/vnd.github+json, text/plain")
+	answer, err := get(ctx, client, rawURL, header, func(parsedURL *url.URL, request *http.Request) {
+		if strings.EqualFold(parsedURL.Hostname(), "api.github.com") {
+			request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+			if token != "" {
+				request.Header.Set("Authorization", "Bearer "+token)
+			}
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if answer.status != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: unexpected HTTP status %s", answer.url, answer.statusText)
+	}
+	return answer.body, nil
+}
+
+// reply is a bounded response, read in full.
+type reply struct {
+	url        string
+	status     int
+	statusText string
+	header     http.Header
+	body       []byte
+}
+
+// get issues one HTTPS GET and reads at most maximumResponseBytes of the
+// answer, whatever its status. prepare, when set, adds the headers that depend
+// on the parsed URL.
+func get(ctx context.Context, client *http.Client, rawURL string, header http.Header, prepare func(*url.URL, *http.Request)) (reply, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse URL: %w", err)
+		return reply{}, fmt.Errorf("parse URL: %w", err)
 	}
 	if parsedURL.Scheme != "https" || parsedURL.Host == "" {
-		return nil, fmt.Errorf("URL must be an absolute HTTPS URL")
+		return reply{}, fmt.Errorf("URL must be an absolute HTTPS URL")
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return reply{}, fmt.Errorf("build request: %w", err)
 	}
-	request.Header.Set("Accept", "application/vnd.github+json, text/plain")
+	for name, values := range header {
+		request.Header[name] = values
+	}
 	request.Header.Set("User-Agent", "ptah-operator-kubernetes-support-updater")
-	if strings.EqualFold(parsedURL.Hostname(), "api.github.com") {
-		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
-		}
+	if prepare != nil {
+		prepare(parsedURL, request)
 	}
 
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", parsedURL.Redacted(), err)
+		return reply{}, fmt.Errorf("GET %s: %w", parsedURL.Redacted(), err)
 	}
 	defer response.Body.Close()
 
 	limited := io.LimitReader(response.Body, maximumResponseBytes+1)
 	contents, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", parsedURL.Redacted(), err)
+		return reply{}, fmt.Errorf("read %s: %w", parsedURL.Redacted(), err)
 	}
 	if len(contents) > maximumResponseBytes {
-		return nil, fmt.Errorf("GET %s: response exceeds %d bytes", parsedURL.Redacted(), maximumResponseBytes)
+		return reply{}, fmt.Errorf("GET %s: response exceeds %d bytes", parsedURL.Redacted(), maximumResponseBytes)
 	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: unexpected HTTP status %s", parsedURL.Redacted(), response.Status)
-	}
-	return contents, nil
+	return reply{
+		url:        parsedURL.Redacted(),
+		status:     response.StatusCode,
+		statusText: response.Status,
+		header:     response.Header,
+		body:       contents,
+	}, nil
 }
 
 func secureRedirectPolicy(request *http.Request, via []*http.Request) error {
@@ -277,6 +394,249 @@ func buildUpdatePlan(current supportManifest, stableContents, kindContents []byt
 		next.LastVerified = verificationDate.Format("2006-01-02")
 	}
 	return updatePlan{manifest: next, oldest: targets[0], newest: targets[len(targets)-1]}, nil
+}
+
+// refreshKindLoadBalancer re-pins the load balancer image when the plan's kind
+// version is not the one the pin was read from, and reads nothing when it is.
+// A read that fails refuses the plan: a proposal that moved kind and kept the
+// previous kind's image would fail its own verification.
+func refreshKindLoadBalancer(ctx context.Context, plan updatePlan, resolver loadBalancerResolver) (updatePlan, error) {
+	kindVersion := plan.manifest.KindVersion
+	if plan.manifest.KindLoadBalancer.KindVersion == kindVersion {
+		return plan, nil
+	}
+	pin, err := resolver.resolve(ctx, kindVersion)
+	if err != nil {
+		return updatePlan{}, fmt.Errorf("%s kindLoadBalancer: cannot pin the load balancer image of kind %s: %w",
+			manifestRelativePath, kindVersion, err)
+	}
+	plan.manifest.KindLoadBalancer = pin
+	return plan, nil
+}
+
+// loadBalancerResolver reads the load balancer image a kind version names and
+// the index digest its registry serves for it.
+type loadBalancerResolver struct {
+	client *http.Client
+	// sourceURL is the raw file root of the kind repository.
+	sourceURL string
+	// registryEndpoint maps a registry host to the root of its HTTP API.
+	registryEndpoint func(registry string) string
+}
+
+func (r loadBalancerResolver) resolve(ctx context.Context, kindTag string) (kindLoadBalancerPin, error) {
+	sourceURL, err := url.JoinPath(r.sourceURL, kindTag, kindLoadBalancerSource)
+	if err != nil {
+		return kindLoadBalancerPin{}, fmt.Errorf("build the %s URL: %w", kindLoadBalancerSource, err)
+	}
+	source, err := fetch(ctx, r.client, sourceURL, "")
+	if err != nil {
+		return kindLoadBalancerPin{}, fmt.Errorf("read %s at %s: %w", kindLoadBalancerSource, kindTag, err)
+	}
+	reference, err := loadBalancerImageFromSource(source)
+	if err != nil {
+		return kindLoadBalancerPin{}, fmt.Errorf("%s at %s: %w", kindLoadBalancerSource, kindTag, err)
+	}
+	digest, err := r.indexDigest(ctx, reference)
+	if err != nil {
+		return kindLoadBalancerPin{}, fmt.Errorf("resolve %s, which %s names at %s: %w", reference, kindLoadBalancerSource, kindTag, err)
+	}
+	return kindLoadBalancerPin{KindVersion: kindTag, Image: reference.String() + "@" + digest}, nil
+}
+
+// imageReference is a fully qualified registry/repository:tag.
+type imageReference struct {
+	registry   string
+	repository string
+	tag        string
+}
+
+func (r imageReference) String() string {
+	return r.registry + "/" + r.repository + ":" + r.tag
+}
+
+// loadBalancerImageFromSource returns the value of the one string constant
+// named Image in kind's loadbalancer package.
+func loadBalancerImageFromSource(source []byte) (imageReference, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), kindLoadBalancerSource, source, parser.SkipObjectResolution)
+	if err != nil {
+		return imageReference{}, fmt.Errorf("parse: %w", err)
+	}
+	if file.Name.Name != "loadbalancer" {
+		return imageReference{}, fmt.Errorf("declares package %s, not loadbalancer", file.Name.Name)
+	}
+	var values []string
+	for _, declaration := range file.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range general.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for index, name := range valueSpec.Names {
+				if name.Name != "Image" {
+					continue
+				}
+				if index >= len(valueSpec.Values) {
+					return imageReference{}, errors.New("constant Image has no value of its own")
+				}
+				literal, ok := valueSpec.Values[index].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return imageReference{}, errors.New("constant Image is not a string literal")
+				}
+				value, err := strconv.Unquote(literal.Value)
+				if err != nil {
+					return imageReference{}, fmt.Errorf("constant Image: %w", err)
+				}
+				values = append(values, value)
+			}
+		}
+	}
+	if len(values) != 1 {
+		return imageReference{}, fmt.Errorf("declares %d constants named Image, want 1", len(values))
+	}
+	match := imageReferencePattern.FindStringSubmatch(values[0])
+	if match == nil {
+		return imageReference{}, fmt.Errorf("constant Image is %q, not the registry, repository and tag of one image", values[0])
+	}
+	return imageReference{registry: match[1], repository: match[2], tag: match[3]}, nil
+}
+
+// registryEndpoint is the API root of a registry host. Docker Hub answers on
+// another name than the one its images are spelled with.
+func registryEndpoint(registry string) string {
+	if registry == dockerHubRegistry {
+		return dockerHubEndpoint
+	}
+	return "https://" + registry
+}
+
+// indexDigest reads the manifest the reference's tag names, anonymously, and
+// returns the digest of the bytes served. It refuses anything but an index
+// that lists every required platform.
+func (r loadBalancerResolver) indexDigest(ctx context.Context, reference imageReference) (string, error) {
+	manifestURL, err := url.JoinPath(r.registryEndpoint(reference.registry), "v2", reference.repository, "manifests", reference.tag)
+	if err != nil {
+		return "", fmt.Errorf("build the manifest URL: %w", err)
+	}
+	header := http.Header{}
+	header.Set("Accept", manifestAccept)
+	answer, err := get(ctx, r.client, manifestURL, header, nil)
+	if err != nil {
+		return "", err
+	}
+	if answer.status == http.StatusUnauthorized {
+		bearer, err := r.anonymousToken(ctx, answer.header.Get("WWW-Authenticate"), reference.repository)
+		if err != nil {
+			return "", err
+		}
+		header.Set("Authorization", "Bearer "+bearer)
+		answer, err = get(ctx, r.client, manifestURL, header, nil)
+		if err != nil {
+			return "", err
+		}
+	}
+	if answer.status != http.StatusOK {
+		return "", fmt.Errorf("GET %s: unexpected HTTP status %s", answer.url, answer.statusText)
+	}
+
+	contentType := answer.header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", fmt.Errorf("GET %s: unreadable Content-Type %q: %w", answer.url, contentType, err)
+	}
+	if !indexMediaTypes[mediaType] {
+		return "", fmt.Errorf("GET %s: the tag names a %s, not a multi-platform index", answer.url, mediaType)
+	}
+	var index struct {
+		MediaType string `json:"mediaType"`
+		Manifests []struct {
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(answer.body, &index); err != nil {
+		return "", fmt.Errorf("GET %s: decode the index: %w", answer.url, err)
+	}
+	if index.MediaType != "" && index.MediaType != mediaType {
+		return "", fmt.Errorf("GET %s: the index says it is a %s, served as a %s", answer.url, index.MediaType, mediaType)
+	}
+	listed := make(map[string]bool, len(index.Manifests))
+	for _, manifest := range index.Manifests {
+		listed[manifest.Platform.OS+"/"+manifest.Platform.Architecture] = true
+	}
+	for _, platform := range requiredPlatforms {
+		if !listed[platform] {
+			return "", fmt.Errorf("GET %s: the index lists no %s image", answer.url, platform)
+		}
+	}
+
+	sum := sha256.Sum256(answer.body)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	if served := answer.header.Get("Docker-Content-Digest"); served != "" && served != digest {
+		return "", fmt.Errorf("GET %s: the registry says the index is %s, its bytes are %s", answer.url, served, digest)
+	}
+	return digest, nil
+}
+
+// anonymousToken answers a registry's Bearer challenge without credentials,
+// which is how Docker Hub grants a pull of a public repository.
+func (r loadBalancerResolver) anonymousToken(ctx context.Context, challenge, repository string) (string, error) {
+	scheme, parameters, _ := strings.Cut(challenge, " ")
+	if !strings.EqualFold(scheme, "Bearer") {
+		return "", fmt.Errorf("the registry refused an anonymous read with challenge %q, not a Bearer token challenge", challenge)
+	}
+	values := map[string]string{}
+	for _, match := range challengePattern.FindAllStringSubmatch(parameters, -1) {
+		values[strings.ToLower(match[1])] = match[2]
+	}
+	realm := values["realm"]
+	if realm == "" {
+		return "", fmt.Errorf("the registry's Bearer challenge %q names no realm", challenge)
+	}
+	tokenURL, err := url.Parse(realm)
+	if err != nil {
+		return "", fmt.Errorf("parse the token realm %q: %w", realm, err)
+	}
+	query := tokenURL.Query()
+	if service := values["service"]; service != "" {
+		query.Set("service", service)
+	}
+	scope := values["scope"]
+	if scope == "" {
+		scope = "repository:" + repository + ":pull"
+	}
+	query.Set("scope", scope)
+	tokenURL.RawQuery = query.Encode()
+
+	header := http.Header{}
+	header.Set("Accept", "application/json")
+	answer, err := get(ctx, r.client, tokenURL.String(), header, nil)
+	if err != nil {
+		return "", fmt.Errorf("request an anonymous pull token: %w", err)
+	}
+	if answer.status != http.StatusOK {
+		return "", fmt.Errorf("request an anonymous pull token: GET %s: unexpected HTTP status %s", answer.url, answer.statusText)
+	}
+	var grant struct {
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(answer.body, &grant); err != nil {
+		return "", fmt.Errorf("decode the anonymous pull token: %w", err)
+	}
+	if grant.Token != "" {
+		return grant.Token, nil
+	}
+	if grant.AccessToken != "" {
+		return grant.AccessToken, nil
+	}
+	return "", errors.New("the token service granted no anonymous pull token")
 }
 
 func sameSupportBundle(left, right supportManifest) bool {

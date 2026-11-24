@@ -305,12 +305,20 @@ type gitReferenceResponse struct {
 }
 
 type kubernetesSupportManifest struct {
-	SchemaVersion int                        `json:"schemaVersion"`
-	Policy        string                     `json:"policy"`
-	WindowSize    int                        `json:"windowSize"`
-	LastVerified  string                     `json:"lastVerified"`
-	KindVersion   string                     `json:"kindVersion"`
-	Releases      []kubernetesSupportRelease `json:"releases"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Policy        string `json:"policy"`
+	WindowSize    int    `json:"windowSize"`
+	LastVerified  string `json:"lastVerified"`
+	KindVersion   string `json:"kindVersion"`
+	// hack/verify-kubernetes-support.go holds the pin to kindVersion; a
+	// release reads only the window, so the pin is decoded and not judged.
+	KindLoadBalancer kubernetesSupportKindLoadBalancer `json:"kindLoadBalancer"`
+	Releases         []kubernetesSupportRelease        `json:"releases"`
+}
+
+type kubernetesSupportKindLoadBalancer struct {
+	KindVersion string `json:"kindVersion"`
+	Image       string `json:"image"`
 }
 
 type kubernetesSupportRelease struct {
