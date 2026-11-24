@@ -16,7 +16,7 @@ func TestStatusTargetBindingsCannotExposeCoordinationKey(t *testing.T) {
 
 	binding := operatorv1alpha1.DatabaseTargetBinding{
 		Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
-		URLFrom: corev1.SecretKeySelector{
+		URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "database"},
 			Key:                  "url",
 		},

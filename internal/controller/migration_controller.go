@@ -47,6 +47,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -895,10 +896,7 @@ func (r *MigrationReconciler) claimMigration(
 			return r.claimRefused(ctx, migration, fmt.Errorf("derive coordination digest: %w", digestErr))
 		}
 		operation.CoordinationDigest = coordinationDigest
-		operation.Target = &operatorv1alpha1.DatabaseTargetBinding{
-			Engine:  migration.Spec.Target.Engine,
-			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
-		}
+		operation.Target = new(databaseTargetBinding(migration.Spec.Target))
 	}
 	if r.Jobs == nil {
 		return r.claimRefused(ctx, migration, errors.New("Job builder is not configured"))
@@ -1157,7 +1155,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 				shadowReadFailure(migration, fmt.Sprintf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))))
 		}
 		return r.retryMigrationOperation(ctx, migration, job,
-			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
+			resultFailure(result.Error, operationURLSource(operation.Target, migration.Spec.Target)))
 	}
 	if result.Truncation != nil && result.Truncation.Stdout {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s result was truncated", operation.Type))
@@ -1630,11 +1628,12 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		// The read names the shadow exactly when the policy asks for a check:
 		// a plan computed from a read that named none would run unchecked. A
 		// runner names none when the Secret key holds no URL, the optional key
-		// of a Secret that lacks it included.
+		// of a Secret that lacks it included, and when a SecretProviderClass
+		// wrote no file under the object's name.
 		if checked := migration.Spec.Policy.DriftCheck != nil; checked != sha256DigestPattern.MatchString(result.ShadowIdentityDigest) {
 			if checked && result.ShadowIdentityDigest == "" {
 				return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
-					shadowReadFailure(migration, "missing_shadow: the shadow database Secret key holds no URL"))
+					shadowReadFailure(migration, missingShadow(migration)))
 			}
 			return r.retryMigrationOperation(ctx, migration, job,
 				errors.New("the history result does not name the shadow database the drift check policy asks for"))
@@ -2501,8 +2500,7 @@ func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (stri
 	// to another shadow is another execution. A policy without one hashes
 	// the map it hashed before the check existed, and keeps its plans.
 	if check := migration.Spec.Policy.DriftCheck; check != nil {
-		policy["drift_check_shadow_secret"] = check.Shadow.URLFrom.Name
-		policy["drift_check_shadow_key"] = check.Shadow.URLFrom.Key
+		addURLSourceInputs(policy, "drift_check_shadow", urlsource.OfRef(check.Shadow))
 		// What the check leaves out decides what it can refuse, so another
 		// list is another policy. The list is a set, so its order is not; a
 		// check that leaves nothing out hashes what it hashed before the list
@@ -2554,8 +2552,6 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		"generation":      strconv.FormatInt(migration.Generation, 10),
 		"oci_ref":         migration.Spec.Artifact.OCIRef,
 		"engine":          string(migration.Spec.Target.Engine),
-		"target_secret":   migration.Spec.Target.URLFrom.Name,
-		"target_key":      migration.Spec.Target.URLFrom.Key,
 		"policy_object":   policyObject,
 		"policy_key":      policyKey,
 		"plain_http":      strconv.FormatBool(migration.Spec.Artifact.Transport.PlainHTTP),
@@ -2569,12 +2565,12 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		// undispatched claim before this entry existed.
 		"transaction_mode": migration.Spec.Policy.TransactionMode,
 	}
+	addURLSourceInputs(inputs, "target", urlsource.OfTarget(migration.Spec.Target))
 	// The history read and the Apply mount the shadow, so it is an input of
 	// both, the way the target's Secret is. A resource without a check adds
 	// nothing, and its claims keep the fingerprints they had.
 	if check := migration.Spec.Policy.DriftCheck; check != nil {
-		inputs["shadow_secret"] = check.Shadow.URLFrom.Name
-		inputs["shadow_key"] = check.Shadow.URLFrom.Key
+		addURLSourceInputs(inputs, "shadow", urlsource.OfRef(check.Shadow))
 		// The Apply's Pod carries the list, so it is an input too, and absent
 		// where the check leaves nothing out.
 		exclude, err := driftExcludeInput(check)
@@ -2732,13 +2728,40 @@ func sourceAccessRefusal(status corev1.ContainerStatus) (string, bool) {
 var historyShadowRefusalCodes = []string{"invalid_shadow", "shadow_is_target"}
 
 // shadowReadFailure is a history read that could not name the shadow database
-// its drift check uses, with the Secret key a person fixes. It publishes no
-// plan, so no approval is spent on a shadow that cannot be used.
+// its drift check uses, with the place a person fixes: a Secret key or a
+// SecretProviderClass object. It publishes no plan, so no approval is spent on
+// a shadow that cannot be used.
 func shadowReadFailure(migration *operatorv1alpha1.PtahMigration, refusal string) error {
-	shadow := migration.Spec.Policy.DriftCheck.Shadow.URLFrom
-	return fmt.Errorf("%s. Check the URL that Secret %q holds under key %q: the drift check's shadow database "+
+	shadow := urlsource.OfRef(migration.Spec.Policy.DriftCheck.Shadow)
+	return fmt.Errorf("%s. Check the URL that %s: the drift check's shadow database "+
 		"has to be a database of its own, and no plan is published until the history read can name it",
-		refusal, shadow.Name, shadow.Key)
+		refusal, shadow.Holder())
+}
+
+// missingShadow is the refusal of a history read that found no shadow URL,
+// in the words of the place it was read from.
+func missingShadow(migration *operatorv1alpha1.PtahMigration) string {
+	if migration.Spec.Policy.DriftCheck.Shadow.URLFromSecretProviderClass != nil {
+		return "missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty)"
+	}
+	return "missing_shadow: the shadow database Secret key holds no URL"
+}
+
+// addURLSourceInputs adds where a database URL comes from to a map of
+// fingerprint inputs, under prefix. A Secret key is the two entries a release
+// before SecretProviderClass sources wrote, prefix_secret and prefix_key, so a
+// resource that reads a Secret keeps the fingerprints it had. A
+// SecretProviderClass object is two other entries, so it never hashes like a
+// Secret of the same names.
+func addURLSourceInputs(inputs map[string]string, prefix string, source urlsource.Source) {
+	if source.Secret != nil {
+		inputs[prefix+"_secret"] = source.Secret.Name
+		inputs[prefix+"_key"] = source.Secret.Key
+	}
+	if source.Class != nil {
+		inputs[prefix+"_secret_provider_class"] = source.Class.Name
+		inputs[prefix+"_object_name"] = source.Class.ObjectName
+	}
 }
 
 func (r *MigrationReconciler) retryMigrationOperation(

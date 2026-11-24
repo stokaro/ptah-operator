@@ -3,9 +3,9 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "26"
-    operator.ptah.run/crd-schema-digest: "sha256:dc5f8b0bc71ea7a8b492ed1f3d1b2e710b1e016186ba980a39a7f0a221052ba4"
+    operator.ptah.run/controller-state-version: "2"
+    operator.ptah.run/crd-schema-version: "27"
+    operator.ptah.run/crd-schema-digest: "sha256:b5d88875875a29f64d48fc89b20c6a2da87c5f6d27186a8dad73191d05c72ded"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -960,9 +960,27 @@ spec:
                             - key
                             type: object
                             x-kubernetes-map-type: atomic
-                        required:
-                        - urlFrom
+                          urlFromSecretProviderClass:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                type: string
+                              objectName:
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                                type: string
+                            required:
+                            - name
+                            - objectName
+                            type: object
+                            x-kubernetes-map-type: atomic
                         type: object
+                        x-kubernetes-validations:
+                        - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                          rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
                     required:
                     - shadow
                     type: object
@@ -1021,13 +1039,31 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
+                  urlFromSecretProviderClass:
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      objectName:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                        type: string
+                    required:
+                    - name
+                    - objectName
+                    type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - engine
-                - urlFrom
                 type: object
                 x-kubernetes-validations:
                 - message: set exactly one of coordinationKey and realmRef
                   rule: has(self.coordinationKey) != has(self.realmRef)
+                - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                  rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
             required:
             - artifact
             - target
@@ -1042,18 +1078,32 @@ spec:
                 || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds()
                 <= self.execution.activeDeadlineSeconds * 1000'
             - message: target.urlFrom must name a required Secret key
-              rule: self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size()
-                > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
+              rule: '!has(self.target.urlFrom) || (self.target.urlFrom.name.size()
+                > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional)
+                || !self.target.urlFrom.optional))'
             - message: policy.driftCheck.shadow.urlFrom must name a required Secret
                 key
-              rule: '!has(self.policy) || !has(self.policy.driftCheck) || (self.policy.driftCheck.shadow.urlFrom.name.size()
-                > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional)
-                || !self.policy.driftCheck.shadow.urlFrom.optional))'
+              rule: '!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFrom)
+                || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && self.policy.driftCheck.shadow.urlFrom.key.size()
+                > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional) || !self.policy.driftCheck.shadow.urlFrom.optional))'
             - message: policy.driftCheck.shadow.urlFrom must name another Secret key
                 than target.urlFrom
-              rule: '!has(self.policy) || !has(self.policy.driftCheck) || self.policy.driftCheck.shadow.urlFrom.name
+              rule: '!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFrom)
+                || !has(self.target.urlFrom) || self.policy.driftCheck.shadow.urlFrom.name
                 != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key
                 != self.target.urlFrom.key'
+            - message: policy.driftCheck.shadow.urlFromSecretProviderClass must name
+                another SecretProviderClass than target.urlFromSecretProviderClass
+              rule: '!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass)
+                || !has(self.target.urlFromSecretProviderClass) || self.policy.driftCheck.shadow.urlFromSecretProviderClass.name
+                != self.target.urlFromSecretProviderClass.name'
+            - message: a URL from a SecretProviderClass needs execution.serviceAccountName
+                to name an account other than default
+              rule: (!has(self.target.urlFromSecretProviderClass) && (!has(self.policy)
+                || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass)))
+                || (has(self.execution) && has(self.execution.serviceAccountName)
+                && self.execution.serviceAccountName.size() > 0 && self.execution.serviceAccountName
+                != 'default')
             - message: artifact.verificationPolicyFrom must name a required ConfigMap
                 key
               rule: '!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size()
@@ -1613,9 +1663,25 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
+                      urlFromSecretProviderClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          objectName:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                            type: string
+                        required:
+                        - name
+                        - objectName
+                        type: object
+                        x-kubernetes-map-type: atomic
                     required:
                     - engine
-                    - urlFrom
                     type: object
                   type:
                     enum:

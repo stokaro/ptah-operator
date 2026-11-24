@@ -358,7 +358,7 @@ func planClaimFixture(
 	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
 	schema.Finalizers = []string{activeOperationFinalizer}
 	schema.Status.Phase = operatorv1alpha1.PhasePlanning
-	schema.Spec.Target.URLFrom = corev1.SecretKeySelector{
+	schema.Spec.Target.URLFrom = &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 	}
 	schema.Spec.Target.CoordinationKey = testCoordinationKey

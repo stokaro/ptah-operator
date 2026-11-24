@@ -28,7 +28,7 @@ func withDriftCheck(migration *operatorv1alpha1.PtahMigration) {
 
 func driftCheckPolicy() *operatorv1alpha1.MigrationDriftCheck {
 	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
-		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-shadow"}, Key: "url"},
+		URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-shadow"}, Key: "url"},
 	}}
 }
 
@@ -322,9 +322,9 @@ func TestAPlanIsNotCurrentAfterTheExcludeListChanged(t *testing.T) {
 	}
 }
 
-// The history read and the Apply mount the shadow, so its Secret and key are
-// inputs of the claim beside the target's, even at one generation; a resource
-// without a check adds nothing to them.
+// The history read and the Apply mount the shadow, so its Secret and key, or
+// its class and object, are inputs of the claim beside the target's, even at
+// one generation; a resource without a check adds nothing to them.
 func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	t.Parallel()
 	migration, _ := awaitingApprovalFixture(t)
@@ -350,6 +350,22 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	excluded := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) {
 		check.Exclude = []string{"public.job_queue", "reporting.*"}
 	})
+	// A class object of the Secret's names is another place, and so is
+	// another class or another object of it.
+	inClass := func(name, object string) func(*operatorv1alpha1.MigrationDriftCheck) {
+		return func(check *operatorv1alpha1.MigrationDriftCheck) {
+			check.Shadow = operatorv1alpha1.DatabaseTargetRef{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+				Name: name, ObjectName: object,
+			}}
+		}
+	}
+	secretShadow := driftCheckPolicy().Shadow.URLFrom
+	class := inputs(inClass(secretShadow.Name, secretShadow.Key))
+	otherClass := inputs(inClass("other-shadow", secretShadow.Key))
+	otherObject := inputs(inClass(secretShadow.Name, "other"))
+	if again := inputs(inClass(secretShadow.Name, secretShadow.Key)); again != class {
+		t.Fatalf("one class shadow has inputs %s and %s", class, again)
+	}
 	if again := inputs(nil); again != unchecked {
 		t.Fatalf("a resource without a check moved its inputs from %s to %s", unchecked, again)
 	}
@@ -363,9 +379,15 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	}
 	for name, value := range map[string]string{
 		"no check": unchecked, "another Secret": renamed, "another key": rekeyed, "an exclude list": excluded,
+		"a class object of the Secret's names": class, "another class": otherClass, "another object": otherObject,
 	} {
 		if value == checked {
 			t.Errorf("the claim's inputs with %s are the ones with the check: %s", name, value)
+		}
+	}
+	for name, value := range map[string]string{"another class": otherClass, "another object": otherObject} {
+		if value == class {
+			t.Errorf("the claim's inputs with %s are the ones with the first class object: %s", name, value)
 		}
 	}
 }
@@ -375,23 +397,32 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 // published from that history binds it; a read that names none under a check,
 // or one under no check, is retried rather than planned from, since a plan from
 // it would run with another check than the one asked for. A read under a check
-// names none when the Secret key holds no URL, which is the shadow being
-// unusable and is said so; a shadow under no check is a runner that answered
-// another question.
+// names none when the Secret key holds no URL, or the SecretProviderClass
+// wrote no file under the object's name, which is the shadow being unusable
+// and is said so in the words of the place it was read from; a shadow under
+// no check is a runner that answered another question.
 func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
 		name    string
 		checked bool
-		shadow  string
-		planned bool
-		reason  operatorv1alpha1.ConditionReason
-		says    string
+		// fromClass reads the shadow from a SecretProviderClass object.
+		fromClass bool
+		shadow    string
+		planned   bool
+		reason    operatorv1alpha1.ConditionReason
+		says      string
 	}{
 		{name: "a check and its shadow", checked: true, shadow: testShadowDigest, planned: true},
 		{
 			name: "a check and no shadow", checked: true, reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
 			says: `missing_shadow: the shadow database Secret key holds no URL. Check the URL that Secret "orders-shadow" holds under key "url"`,
+		},
+		{
+			name: "a check and no shadow file in the class volume", checked: true, fromClass: true,
+			reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+			says: `missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty). ` +
+				`Check the URL that SecretProviderClass "orders-shadow-store" writes as object "url"`,
 		},
 		{
 			name: "a shadow and no check", shadow: testShadowDigest, reason: operatorv1alpha1.ReasonOperationFailed,
@@ -403,6 +434,11 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 			migration := migrationFixture()
 			if row.checked {
 				migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+			}
+			if row.fromClass {
+				migration.Spec.Policy.DriftCheck.Shadow = operatorv1alpha1.DatabaseTargetRef{
+					URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "orders-shadow-store", ObjectName: "url"},
+				}
 			}
 			migration.Status.ExecutionBinding = migrationExecutionBinding()
 			migration.Status.Artifact = resolvedMigrationArtifact()

@@ -16,6 +16,58 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.20
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade, and let every Apply finish first. A database URL can now come
+from a SecretProviderClass, so the CRD schema version moves from 26 to 27 and
+the controller-state version from 1 to 2. Once this release's hook has updated
+the CRDs, 0.2.19's CRD hook refuses [a rollback](../../use/operations/#rollback)
+to 0.2.19, since they are newer than 0.2.19 reads. The controller-state version
+is part of the execution binding, so the upgrade retires the binding: approve
+again whatever was waiting, after the resource has read its database and
+planned. A read still running when the new manager starts runs again.
+
+An Apply whose Job 0.2.19 created is not waited for: its claim was recorded
+under the earlier controller state, so the new manager records it with outcome
+`Unknown`, whatever it did. Then a `PtahSchema` reads its database before it
+runs anything else, and a `PtahMigration` waits for a history read or a
+`PtahMigrationRunAcknowledgment` to account for
+[the run](../../use/operations/#a-migration-run-nobody-accounted-for) before
+it claims another Apply. To keep that from happening, start the upgrade when
+this prints no `Apply`:
+
+```sh
+kubectl get ptahschema,ptahmigration -A \
+  -o custom-columns=KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name,OPERATION:.status.activeOperation.type
+```
+
+The runner protocol and the executor, Ptah v0.35.1, are those of 0.2.19.
+
+- **A database URL can come from a SecretProviderClass.**
+  `spec.target.urlFromSecretProviderClass` names a `SecretProviderClass` of
+  the Secrets Store CSI driver in the resource's namespace and the object it
+  writes the URL as, in place of `urlFrom`. A `PtahSchema`'s `spec.dev` and a
+  `PtahMigration`'s `spec.policy.driftCheck.shadow` take it too. The
+  operation Pod mounts the class as its URL volume, so the URL comes from the
+  store with no Kubernetes Secret in between, and the manager reads neither
+  the class nor the store. A resource that sets it has to name
+  `spec.execution.serviceAccountName`, and not `default`, since the store
+  trusts that account; bind the store's role to an audience no token in the
+  Pod carries. A development database or a shadow from a class names another
+  class than the target's. An object the class does not write, or writes
+  empty, stops the operation that reads it, and the status names the class and
+  the object.
+  [Credentials from a SecretProviderClass](../../reference/credentials-and-admission/#secret-provider-class)
+  has the contract. A resource that keeps `urlFrom` needs no change to its
+  spec.
+- **A Plan no longer runs without the development database it names.** A
+  `PtahSchema` Plan whose `spec.dev` Secret key held an empty URL ran, and
+  Ptah planned without a development database. The runner now refuses such a
+  Plan with `missing_dev` before Ptah starts, as it refuses one whose class
+  writes no URL, and the message names the Secret key or the class object to
+  fix.
+
 ## 0.2.19
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

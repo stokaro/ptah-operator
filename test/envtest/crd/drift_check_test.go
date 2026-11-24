@@ -39,9 +39,9 @@ func TestPtahMigrationDriftCheckRefusals(t *testing.T) {
 			want:   []cause{{"spec.policy.driftCheck.shadow", "Required value"}},
 		},
 		{
-			name:   "a shadow without a Secret",
+			name:   "a shadow naming no URL",
 			mutate: setting(map[string]any{}, "spec", "policy", "driftCheck", "shadow"),
-			want:   []cause{{"spec.policy.driftCheck.shadow.urlFrom", "Required value"}},
+			want:   []cause{{"spec.policy.driftCheck.shadow", "set exactly one of urlFrom and urlFromSecretProviderClass"}},
 		},
 		{
 			name:   "an optional shadow Secret",

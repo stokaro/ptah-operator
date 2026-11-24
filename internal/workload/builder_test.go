@@ -524,7 +524,7 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 		Source:             originalSource,
 		Target: operatorv1alpha1.DatabaseTargetBinding{
 			Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
-			URLFrom: corev1.SecretKeySelector{
+			URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "applied-target"}, Key: "dsn",
 			},
 		},
@@ -1532,7 +1532,7 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "prod/team-a/orders-primary",
-				URLFrom: corev1.SecretKeySelector{
+				URLFrom: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"},
 					Key:                  "url",
 				},
@@ -1558,7 +1558,7 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 					},
 				},
 			},
-			Dev: &operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+			Dev: &operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "development-database"},
 				Key:                  "url",
 			}},
@@ -1647,7 +1647,7 @@ func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1
 		active.TargetIdentityDigest = schema.Status.Target.IdentityDigest
 		active.Target = &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  schema.Spec.Target.Engine,
-			URLFrom: *schema.Spec.Target.URLFrom.DeepCopy(),
+			URLFrom: schema.Spec.Target.URLFrom.DeepCopy(),
 		}
 		active.Source = &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: schema.Status.Source.ResolvedReference,
@@ -1669,7 +1669,7 @@ func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1
 		active.TargetIdentityDigest = digest('b')
 		active.Target = &operatorv1alpha1.DatabaseTargetBinding{
 			Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
-			URLFrom: corev1.SecretKeySelector{
+			URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 			},
 		}

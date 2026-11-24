@@ -223,7 +223,7 @@ func TestMountsShadowReadsTheBuildersJobs(t *testing.T) {
 	const shadow = "e2e-postgresql-drift-shadow-db"
 	migration := mtMigration()
 	migration.Spec.Policy.DriftCheck = &ptahv1alpha1.MigrationDriftCheck{Shadow: ptahv1alpha1.DatabaseTargetRef{
-		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: shadow}, Key: "url"},
+		URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: shadow}, Key: "url"},
 	}}
 	apply := func(jobs []batchv1.Job) batchv1.Job {
 		for _, job := range jobs {
@@ -322,7 +322,7 @@ func TestCarriesDriftExcludeReadsTheBuildersJobs(t *testing.T) {
 	const queue = "public.e2e_unmigrated$$queue"
 	migration := mtMigration()
 	migration.Spec.Policy.DriftCheck = &ptahv1alpha1.MigrationDriftCheck{
-		Shadow: ptahv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+		Shadow: ptahv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "e2e-postgresql-drift-shadow-db"}, Key: "url",
 		}},
 		Exclude: []string{queue, "legacy,archive"},

@@ -35,6 +35,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 const (
@@ -409,8 +410,8 @@ func (i buildInput) validate() error {
 		if i.plan != nil {
 			return fmt.Errorf("%s operation cannot carry a plan", i.operation.Type)
 		}
-		if i.operation.Target == nil || i.operation.Target.URLFrom.Name == "" || i.operation.Target.URLFrom.Key == "" {
-			return fmt.Errorf("%s operation requires an immutable target Secret binding", i.operation.Type)
+		if i.operation.Target == nil || urlsource.OfBinding(*i.operation.Target).Validate() != nil {
+			return fmt.Errorf("%s operation requires an immutable target URL binding", i.operation.Type)
 		}
 		if i.operation.Source == nil {
 			return fmt.Errorf("%s operation requires immutable artifact access", i.operation.Type)
@@ -433,8 +434,8 @@ func (i buildInput) validate() error {
 		if err := validateApplyPlan(i.schema, i.plan); err != nil {
 			return err
 		}
-		if i.operation.Target == nil || i.operation.Target.URLFrom.Name == "" || i.operation.Target.URLFrom.Key == "" {
-			return errors.New("apply operation requires an immutable target Secret binding")
+		if i.operation.Target == nil || urlsource.OfBinding(*i.operation.Target).Validate() != nil {
+			return errors.New("apply operation requires an immutable target URL binding")
 		}
 		if !sha256Pattern.MatchString(i.operation.CoordinationDigest) ||
 			i.operation.CoordinationDigest != i.plan.Spec.CoordinationDigest {
@@ -532,7 +533,11 @@ func (i buildInput) dataPlane() (
 		mounts = append(mounts, corev1.VolumeMount{Name: policyVolumeName, MountPath: "/verification", ReadOnly: true})
 	case operatorv1alpha1.OperationObserve:
 		target := *i.operation.Target
-		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
+		var err error
+		environment, volumes, mounts, err = withDatabaseURL(environment, volumes, mounts, urlsource.OfBinding(target))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 		environment = append(environment,
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
@@ -544,7 +549,11 @@ func (i buildInput) dataPlane() (
 		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 	case operatorv1alpha1.OperationPlan:
 		target := *i.operation.Target
-		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
+		var err error
+		environment, volumes, mounts, err = withDatabaseURL(environment, volumes, mounts, urlsource.OfBinding(target))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 		environment = append(environment,
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
@@ -556,8 +565,11 @@ func (i buildInput) dataPlane() (
 		)
 		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 		if i.operation.ObservationDev != nil {
-			variable, volume, mount := databaseCredential(runner.EnvDevelopmentDatabaseURLFile,
-				developmentDatabaseURLVolumeName, developmentDatabaseURLDirectory, i.operation.ObservationDev.URLFrom)
+			variable, volume, mount, err := databaseCredential(runner.EnvDevelopmentDatabaseURLFile,
+				developmentDatabaseURLVolumeName, developmentDatabaseURLDirectory, urlsource.OfRef(*i.operation.ObservationDev))
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("development database: %w", err)
+			}
 			environment, volumes, mounts = append(environment, variable), append(volumes, volume), append(mounts, mount)
 		}
 		if len(i.operation.ObservationExclude) > 0 {
@@ -571,13 +583,8 @@ func (i buildInput) dataPlane() (
 				literalEnv("PTAH_PROTECTED_TABLES", encodeStringArray(i.operation.ObservationProtectedTables)))
 		}
 	case operatorv1alpha1.OperationApply:
-		target := operatorv1alpha1.DatabaseTargetBinding{
-			Engine:  i.schema.Spec.Target.Engine,
-			URLFrom: i.schema.Spec.Target.URLFrom,
-		}
-		if i.operation.Target != nil {
-			target = *i.operation.Target
-		}
+		// validate refused an Apply whose claim binds no target.
+		target := *i.operation.Target
 		projections, err := planstore.VolumeSources(i.plan)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("build plan projection: %w", err)
@@ -591,7 +598,10 @@ func (i buildInput) dataPlane() (
 			}},
 		})
 		mounts = append(mounts, corev1.VolumeMount{Name: planVolumeName, MountPath: planPath, ReadOnly: true})
-		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
+		environment, volumes, mounts, err = withDatabaseURL(environment, volumes, mounts, urlsource.OfBinding(target))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 		environment = append(environment,
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
@@ -998,8 +1008,8 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 	if schema.Status.ExecutionBinding.ControllerStateVersion < 1 {
 		return errors.New("schema durable execution binding has no controller state version")
 	}
-	if schema.Spec.Target.URLFrom.Name == "" || schema.Spec.Target.URLFrom.Key == "" {
-		return errors.New("target Secret name and key are required")
+	if err := urlsource.OfTarget(schema.Spec.Target).Validate(); err != nil {
+		return fmt.Errorf("target: %w", err)
 	}
 	if _, err := schemaCoordinationDigest(schema); err != nil {
 		return err
@@ -1246,10 +1256,13 @@ func withDatabaseURL(
 	environment []corev1.EnvVar,
 	volumes []corev1.Volume,
 	mounts []corev1.VolumeMount,
-	selector corev1.SecretKeySelector,
-) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
-	variable, volume, mount := databaseCredential(runner.EnvDatabaseURLFile, databaseURLVolumeName, databaseURLDirectory, selector)
-	return append(environment, variable), append(volumes, volume), append(mounts, mount)
+	source urlsource.Source,
+) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
+	variable, volume, mount, err := databaseCredential(runner.EnvDatabaseURLFile, databaseURLVolumeName, databaseURLDirectory, source)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("target: %w", err)
+	}
+	return append(environment, variable), append(volumes, volume), append(mounts, mount), nil
 }
 
 func requiredSecretEnv(name, secret, key string) corev1.EnvVar {

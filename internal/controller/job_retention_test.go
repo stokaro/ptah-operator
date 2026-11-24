@@ -30,6 +30,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // finishedJob is a stored Job a cleanup patch can reach.
@@ -285,7 +286,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		return pod
 	}
 	coded := func(code string) error {
-		return resultFailure(&runner.ResultError{Code: code, Message: "the runner's sentence"}, corev1.SecretKeySelector{})
+		return resultFailure(&runner.ResultError{Code: code, Message: "the runner's sentence"}, urlsource.OfSecret(corev1.SecretKeySelector{}))
 	}
 	const lost = "ContainerStatusUnknown"
 	for _, test := range []struct {
@@ -989,12 +990,12 @@ func TestAnUncertainMigrationApplyKeepsItsLogByWhatItReported(t *testing.T) {
 		{name: "under Always, with nothing reported", failure: unread, ttl: long, pointer: kept},
 		{
 			name: "a result that wrote no line", approved: true,
-			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, corev1.SecretKeySelector{}),
+			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, urlsource.OfSecret(corev1.SecretKeySelector{})),
 			ttl:     long,
 		},
 		{
 			name:    "a result that wrote no line, under Always",
-			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, corev1.SecretKeySelector{}),
+			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, urlsource.OfSecret(corev1.SecretKeySelector{})),
 			ttl:     long,
 		},
 		{name: "under Always, reported Partial", reported: dataplane.MigrationOutcomePartial, failure: unread, ttl: long, pointer: kept},

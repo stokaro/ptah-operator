@@ -178,7 +178,7 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "tenant-a/orders",
-				URLFrom:         corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom:         &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",

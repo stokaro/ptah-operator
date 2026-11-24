@@ -12,6 +12,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // TestARunAccountFromPtahV023Documents writes the message and the status
@@ -89,9 +90,9 @@ func TestUnseenObjectsReadAsTheOperatorsSentence(t *testing.T) {
 	named := resultFailure(&runner.ResultError{
 		Code: "permission_denied", Message: "RUNNER-TEXT",
 		UnseenObjects: []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines},
-	}, url)
+	}, urlsource.OfSecret(url))
 	want := targetfailure.UnseenObjectsMessage(dataplane.TargetPermissionDenied,
-		[]string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, url)
+		[]string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, urlsource.OfSecret(url))
 	if named.Error() != want || !strings.Contains(want, "cannot see every trigger and routine") {
 		t.Fatalf("resultFailure() = %q, want %q", named.Error(), want)
 	}
@@ -99,8 +100,8 @@ func TestUnseenObjectsReadAsTheOperatorsSentence(t *testing.T) {
 	if !known || reason != operatorv1alpha1.ReasonPermissionDenied || message != want {
 		t.Fatalf("databaseUnreached() = %s, %q, %t; want %s and the sentence", reason, message, known, operatorv1alpha1.ReasonPermissionDenied)
 	}
-	plain := resultFailure(&runner.ResultError{Code: "permission_denied", Message: "RUNNER-TEXT"}, url)
-	if got := plain.Error(); got != targetfailure.Message(dataplane.TargetPermissionDenied, url) {
+	plain := resultFailure(&runner.ResultError{Code: "permission_denied", Message: "RUNNER-TEXT"}, urlsource.OfSecret(url))
+	if got := plain.Error(); got != targetfailure.Message(dataplane.TargetPermissionDenied, urlsource.OfSecret(url)) {
 		t.Fatalf("resultFailure() without unseen objects = %q, want the plain sentence", got)
 	}
 }

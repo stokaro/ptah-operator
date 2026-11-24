@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/policyenv"
 )
 
@@ -34,12 +35,15 @@ func TestStatusVersionInjectionRequiresManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyName := policy(t, "ptah-operator-status-write-guard-")
+	// The fixtures record the version this manager writes; the patch moves it
+	// one past, as the acceptance control does.
+	current := controllerstate.CurrentVersion
 	for _, fixture := range []client.Object{tenantSchema, tenantMigration} {
 		live := fixture.DeepCopyObject().(client.Object)
 		if err := env.Admin.Get(ctx, client.ObjectKeyFromObject(live), live); err != nil {
 			t.Fatal(err)
 		}
-		patch := fmt.Sprintf(`[{"op":"test","path":"/metadata/resourceVersion","value":%q},{"op":"test","path":"/status/executionBinding/controllerStateVersion","value":1},{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]`, live.GetResourceVersion())
+		patch := fmt.Sprintf(`[{"op":"test","path":"/metadata/resourceVersion","value":%q},{"op":"test","path":"/status/executionBinding/controllerStateVersion","value":%d},{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":%d}]`, live.GetResourceVersion(), current, current+1)
 		err := ordinary.Status().Patch(ctx, live.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, []byte(patch)), client.DryRunAll)
 		verdict := policyenv.Decide(err)
 		var status apierrors.APIStatus
@@ -76,7 +80,7 @@ func TestStatusVersionInjectionRequiresManager(t *testing.T) {
 		if !apierrors.IsInvalid(staleErr) || staleVerdict.Policy != "" || staleVerdict.Binding != "" {
 			t.Fatalf("stale patch must fail before the policy: %v", staleErr)
 		}
-		freshPatch := fmt.Sprintf(`[{"op":"test","path":"/metadata/resourceVersion","value":%q},{"op":"test","path":"/status/executionBinding/controllerStateVersion","value":1},{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]`, changed.GetResourceVersion())
+		freshPatch := fmt.Sprintf(`[{"op":"test","path":"/metadata/resourceVersion","value":%q},{"op":"test","path":"/status/executionBinding/controllerStateVersion","value":%d},{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":%d}]`, changed.GetResourceVersion(), current, current+1)
 		freshErr := ordinary.Status().Patch(ctx, changed.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, []byte(freshPatch)), client.DryRunAll)
 		freshVerdict := policyenv.Decide(freshErr)
 		if freshVerdict.Policy != policyName || freshVerdict.Binding != policyName {

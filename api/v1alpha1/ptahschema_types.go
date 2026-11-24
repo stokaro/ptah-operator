@@ -103,16 +103,18 @@ const (
 // PtahSchemaSpec declares one desired schema and one database target.
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
-// +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.target.urlFrom) || (self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional))",message="target.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="(!has(self.target.urlFromSecretProviderClass) && (!has(self.dev) || !has(self.dev.urlFromSecretProviderClass))) || (has(self.execution) && has(self.execution.serviceAccountName) && self.execution.serviceAccountName.size() > 0 && self.execution.serviceAccountName != 'default')",message="a URL from a SecretProviderClass needs execution.serviceAccountName to name an account other than default"
+// +kubebuilder:validation:XValidation:rule="!has(self.dev) || !has(self.dev.urlFromSecretProviderClass) || !has(self.target.urlFromSecretProviderClass) || self.dev.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name",message="dev.urlFromSecretProviderClass must name another SecretProviderClass than target.urlFromSecretProviderClass"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.git) || self.desired.git.path != '.'",message="desired.git.path selects one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.https) || self.desired.https.path != '.'",message="desired.https.path selects one file for a schema"
-// +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.dev) || !has(self.dev.urlFrom) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
-	// Target is the database to converge, named through a Secret the manager
-	// itself has no permission to read.
+	// Target is the database to converge, named through a Secret or a
+	// SecretProviderClass the manager itself has no permission to read.
 	Target DatabaseTargetSpec `json:"target"`
 	// Desired is the source that declares the schema, and the rows a
 	// declaration names, to converge it to: an OCI artifact, a ConfigMap, a
@@ -120,6 +122,12 @@ type PtahSchemaSpec struct {
 	Desired SourceSpec `json:"desired"`
 	// Dev is a scratch database Ptah may use where a comparison needs one. It
 	// is never the target, and nothing it holds is kept.
+	//
+	// A Plan whose development database file holds no URL stops before Ptah
+	// starts: a class object the class does not write, or a Secret key or
+	// class object that is empty. A class development database names a class
+	// other than the target's, since each URL is its own volume and one Pod
+	// would mount the class twice.
 	Dev *DatabaseTargetRef `json:"dev,omitempty"`
 	// Policy decides what may happen without a person: whether a plan applies
 	// itself, whether a destructive one is permitted at all, what counts as
@@ -145,11 +153,12 @@ type PtahSchemaSpec struct {
 	Suspend bool `json:"suspend,omitempty"`
 }
 
-// DatabaseTargetSpec identifies a supported engine, a namespaced Secret key,
-// and the coordination realm of the physical database: a key this namespace
-// owns, or a PtahRealm an administrator admitted this namespace to. There is
-// deliberately no namespace field.
+// DatabaseTargetSpec identifies a supported engine, where the connection URL
+// comes from in this namespace, and the coordination realm of the physical
+// database: a key this namespace owns, or a PtahRealm an administrator
+// admitted this namespace to. There is deliberately no namespace field.
 // +kubebuilder:validation:XValidation:rule="has(self.coordinationKey) != has(self.realmRef)",message="set exactly one of coordinationKey and realmRef"
+// +kubebuilder:validation:XValidation:rule="has(self.urlFrom) != has(self.urlFromSecretProviderClass)",message="set exactly one of urlFrom and urlFromSecretProviderClass"
 type DatabaseTargetSpec struct {
 	// Engine is the database this target speaks. An engine outside the
 	// supported set is refused with a condition rather than attempted.
@@ -205,7 +214,50 @@ type DatabaseTargetSpec struct {
 	// URLFrom names the Secret key holding the connection URL. The manager has
 	// no permission to read it: the operation Pod resolves it, and the URL
 	// never reaches status, an Event or a command line.
-	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
+	//
+	// Exactly one of urlFrom and urlFromSecretProviderClass is set.
+	// +optional
+	URLFrom *corev1.SecretKeySelector `json:"urlFrom,omitempty"`
+
+	// URLFromSecretProviderClass names a SecretProviderClass of the Secrets
+	// Store CSI driver in this namespace, and the object it writes the
+	// connection URL to. The operation Pod mounts the class as a CSI volume in
+	// the container that runs Ptah, and the driver fetches the URL from the
+	// store with that Pod's ServiceAccount token. The manager reads neither
+	// the class nor the URL, and the URL never reaches status, an Event or a
+	// command line.
+	//
+	// The store trusts the ServiceAccount the operation Pod runs as, so a
+	// resource that sets this names that account in
+	// execution.serviceAccountName, and not the namespace's default one.
+	//
+	// Exactly one of urlFrom and urlFromSecretProviderClass is set.
+	// +optional
+	URLFromSecretProviderClass *SecretProviderClassObjectSelector `json:"urlFromSecretProviderClass,omitempty"`
+}
+
+// SecretProviderClassObjectSelector names one object a SecretProviderClass of
+// the Secrets Store CSI driver writes: the file the driver puts in the volume
+// it mounts. The class and its provider decide where the value comes from and
+// how the driver authenticates to the store; the operator names the class and
+// the file, and nothing else.
+// +structType=atomic
+type SecretProviderClassObjectSelector struct {
+	// Name is the SecretProviderClass, in this resource's namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// ObjectName is the file the class writes the URL to: the objectName, or
+	// the alias, the class gives the object. It is one file name, of the
+	// characters a Secret key may hold, and not "." or "..", or starting
+	// with "..". A name the class does not write leaves no file, and the
+	// operation that reads the URL stops and names the class and the object.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$`
+	ObjectName string `json:"objectName"`
 }
 
 // DatabaseTargetBinding is the key-free immutable target snapshot stored in
@@ -214,14 +266,33 @@ type DatabaseTargetSpec struct {
 type DatabaseTargetBinding struct {
 	// Engine is the database this binding speaks.
 	Engine DatabaseEngine `json:"engine"`
-	// URLFrom is the Secret key the operation Pod reads the URL from.
-	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
+	// URLFrom is the Secret key the operation Pod reads the URL from, when
+	// the URL comes from a Secret.
+	// +optional
+	URLFrom *corev1.SecretKeySelector `json:"urlFrom,omitempty"`
+	// URLFromSecretProviderClass is the SecretProviderClass object the
+	// operation Pod reads the URL from, when the URL comes from one.
+	// +optional
+	URLFromSecretProviderClass *SecretProviderClassObjectSelector `json:"urlFromSecretProviderClass,omitempty"`
 }
 
-// DatabaseTargetRef is a database URL reference used for optional rehearsal.
+// DatabaseTargetRef names where the connection URL of a database other than
+// the target comes from: a development database or a shadow database.
+// +kubebuilder:validation:XValidation:rule="has(self.urlFrom) != has(self.urlFromSecretProviderClass)",message="set exactly one of urlFrom and urlFromSecretProviderClass"
 type DatabaseTargetRef struct {
 	// URLFrom names the Secret key holding this database's connection URL.
-	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
+	//
+	// Exactly one of urlFrom and urlFromSecretProviderClass is set.
+	// +optional
+	URLFrom *corev1.SecretKeySelector `json:"urlFrom,omitempty"`
+
+	// URLFromSecretProviderClass names the SecretProviderClass object holding
+	// this database's connection URL, as the target's
+	// urlFromSecretProviderClass does.
+	//
+	// Exactly one of urlFrom and urlFromSecretProviderClass is set.
+	// +optional
+	URLFromSecretProviderClass *SecretProviderClassObjectSelector `json:"urlFromSecretProviderClass,omitempty"`
 }
 
 // SourceSpec names where the desired files come from: an OCI artifact, a
@@ -746,6 +817,9 @@ type ExecutionSpec struct {
 
 	// ServiceAccountName is the identity operation Pods run as. It is theirs
 	// rather than the manager's, and it needs no Kubernetes permission at all.
+	// Unset, they run as the namespace's default account. A resource that
+	// reads a URL from a SecretProviderClass names an account other than
+	// default: the store trusts it.
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 	// ImagePullSecrets are the pull Secrets those Pods use.
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`

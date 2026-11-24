@@ -2811,7 +2811,7 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		Spec: operatorv1alpha1.PtahSchemaSpec{
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: testCoordinationKey,
-				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef:                 "oci://registry.example/team/schema:stable",

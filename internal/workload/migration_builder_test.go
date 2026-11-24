@@ -367,7 +367,7 @@ func TestBuildMigrationCarriesTheExcludeListToTheCheckedApplyAlone(t *testing.T)
 	checked := func(exclude []string) *operatorv1alpha1.PtahMigration {
 		migration := migrationFixture()
 		migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{
-			Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+			Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
 			}},
 			Exclude: exclude,
@@ -537,7 +537,7 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 			name: "apply under a drift check whose plan binds no shadow",
 			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
-					URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
+					URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
 				}}
 			},
 			message: "binds no shadow database",
@@ -546,7 +546,7 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 			name: "apply whose drift check repeats an exclude selector",
 			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
 				migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{
-					Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+					Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
 					}},
 					Exclude: []string{"public.job_queue", "public.job_queue"},
@@ -668,7 +668,7 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "prod/team-a/orders-primary",
-				URLFrom: corev1.SecretKeySelector{
+				URLFrom: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"},
 					Key:                  "url",
 				},
@@ -751,7 +751,7 @@ func migrationOperationFixture(operation operatorv1alpha1.MigrationOperationType
 		claim.CoordinationDigest = testCoordinationDigest()
 		claim.Target = &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  migration.Spec.Target.Engine,
-			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
+			URLFrom: migration.Spec.Target.URLFrom.DeepCopy(),
 		}
 	}
 	if operation == operatorv1alpha1.MigrationOperationApply {

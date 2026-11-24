@@ -67,6 +67,7 @@ func Run(ctx context.Context, config Config) Result {
 	// below holds the values the child will receive. A refusal is reported
 	// after the protocol check, and its words name the variable, never the
 	// file's content.
+	_, devFileNamed := environmentMap(environment)[EnvDevelopmentDatabaseURLFile]
 	resolved, credentialErr := ResolveCredentialFiles(environment)
 	if credentialErr == nil {
 		environment = resolved
@@ -143,6 +144,13 @@ func Run(ctx context.Context, config Config) Result {
 		result.TargetIdentityDigest = targetDigest
 	} else if operationNeedsDatabase(config.Operation) {
 		setResultError(&result, "missing_target", errors.New("PTAH_DB_URL is required"), redactor, config.Diagnostics)
+		return result
+	}
+	// A Plan whose Job names a development database is never computed
+	// without one: Ptah plans without a scratch database when it is given
+	// none, and that plan is not the one the resource asked for.
+	if code, err := developmentDatabaseRefusal(devFileNamed, values); err != nil {
+		setResultError(&result, code, err, redactor, config.Diagnostics)
 		return result
 	}
 	// A drift check's shadow database is read by the two operations that bind
@@ -1929,6 +1937,25 @@ func shadowBindingRefusal(observed, expected string) (string, error) {
 		return "shadow_binding_mismatch", errors.New("the shadow database changed after planning")
 	}
 	return "", nil
+}
+
+// developmentDatabaseRefusal is the refusal of a Job that names a development
+// database file holding no URL: the error code and the error, or an empty code
+// and nil when the Job names none or the file holds the URL. Only a Plan's Job
+// names one.
+//
+// The file is missing when a SecretProviderClass does not write the object:
+// the class decides which files its volume holds, and the volume mounts
+// without the rest. A Secret key cannot leave it missing, since the API
+// refuses an optional development database key and the kubelet starts no Pod
+// whose Secret lacks the key. Either may hold an empty URL. ResolveCredentialFiles
+// leaves the variable unset for a missing file, as it does for any
+// credential, so this is where a Plan that needs it refuses.
+func developmentDatabaseRefusal(fileNamed bool, values map[string]string) (string, error) {
+	if !fileNamed || values[EnvDevelopmentDatabaseURL] != "" {
+		return "", nil
+	}
+	return CodeMissingDev, errors.New("the development database file is missing or holds no URL")
 }
 
 // targetBindingRefusal is the refusal of a database operation bound to an

@@ -2,6 +2,7 @@ package admissionpolicy_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -15,15 +16,24 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/policyenv"
 )
 
 const (
-	credentialEnvironmentMessage = "reads every credential from a file in a Secret volume"
+	credentialEnvironmentMessage = "reads every credential from a file in a volume"
 	workloadShapeMessage         = "rejected an unsafe workload shape"
 	// volumeBound is the clause of the Job guard that bounds how many volumes
 	// a Job carries beside its result credentials.
 	volumeBound = `volume.name != "result-credentials").size() <= `
+	// urlVolumeSource is the clause of the Job guard that says what a database
+	// URL volume may be: a Secret volume, or a read-only volume of the Secrets
+	// Store CSI driver naming one SecretProviderClass and nothing else. The
+	// mutations below rewrite it, and a rewrite of text the guard no longer
+	// holds fails the suite, so this copy cannot drift from the guard.
+	urlVolumeSource = `(has(volume.secret) || (has(volume.csi) && volume.csi.driver == "secrets-store.csi.k8s.io" && ` +
+		`has(volume.csi.readOnly) && volume.csi.readOnly && !has(volume.csi.fsType) && !has(volume.csi.nodePublishSecretRef) && ` +
+		`has(volume.csi.volumeAttributes) && volume.csi.volumeAttributes.size() == 1 && "secretProviderClass" in volume.csi.volumeAttributes))`
 )
 
 // planJob is the Plan Job the manager dispatches for the tenant schema with
@@ -32,6 +42,50 @@ const (
 // credential is a Secret volume, so this is the most volumes a Job of this
 // release carries.
 func planJob(edit func(*batchv1.Job)) func() (client.Object, error) {
+	return planJobFor(nil, edit)
+}
+
+// classPlanJob is planJob for a schema whose target and development database
+// read their URLs from SecretProviderClass objects. It refuses to return a Job
+// that does not mount both as CSI volumes, since every row built on it
+// measures those mounts.
+func classPlanJob(edit func(*batchv1.Job)) func() (client.Object, error) {
+	build := planJobFor(func(schema *operatorv1alpha1.PtahSchema) {
+		schema.Spec.Target.URLFrom = nil
+		schema.Spec.Target.URLFromSecretProviderClass = &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "orders-store", ObjectName: "url"}
+		schema.Spec.Dev.URLFrom = nil
+		schema.Spec.Dev.URLFromSecretProviderClass = &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "orders-development-store", ObjectName: "url"}
+		schema.Spec.Execution.ServiceAccountName = "orders-operations"
+	}, nil)
+	return func() (client.Object, error) {
+		object, err := build()
+		if err != nil {
+			return nil, err
+		}
+		job := object.(*batchv1.Job)
+		for _, name := range []string{"database-url", "development-database-url"} {
+			if classVolume(job, name) == nil {
+				return nil, fmt.Errorf("the Plan Job mounts no %s volume from a SecretProviderClass", name)
+			}
+		}
+		if edit != nil {
+			edit(job)
+		}
+		return job, nil
+	}
+}
+
+// classVolume is the CSI source of the Job's volume called name, or nil.
+func classVolume(job *batchv1.Job, name string) *corev1.CSIVolumeSource {
+	for index := range job.Spec.Template.Spec.Volumes {
+		if volume := &job.Spec.Template.Spec.Volumes[index]; volume.Name == name {
+			return volume.CSI
+		}
+	}
+	return nil
+}
+
+func planJobFor(prepare func(*operatorv1alpha1.PtahSchema), edit func(*batchv1.Job)) func() (client.Object, error) {
 	return func() (client.Object, error) {
 		schema := tenantSchema.DeepCopy()
 		schema.Spec.Desired.RegistryAuthFrom = &operatorv1alpha1.RegistryAuthSource{
@@ -40,9 +94,12 @@ func planJob(edit func(*batchv1.Job)) func() (client.Object, error) {
 		schema.Spec.Desired.Transport.CAFrom = &corev1.ConfigMapKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "orders-registry-ca"}, Key: "ca.pem",
 		}
-		schema.Spec.Dev = &operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+		schema.Spec.Dev = &operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "orders-development"}, Key: "url",
 		}}
+		if prepare != nil {
+			prepare(schema)
+		}
 		reference := "oci://registry.example/acme/schema@" + digest("a")
 		schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
 			RequestedReference: schema.Spec.Desired.OCIRef, ResolvedReference: reference, Digest: digest("a"),
@@ -58,7 +115,10 @@ func planJob(edit func(*batchv1.Job)) func() (client.Object, error) {
 			AdmissionSnapshot:    &operatorv1alpha1.PodAdmissionSnapshot{Digest: digest("b"), TemplateDigest: digest("c")},
 			CoordinationDigest:   digest("6"),
 			TargetIdentityDigest: digest("5"),
-			Target:               &operatorv1alpha1.DatabaseTargetBinding{Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, URLFrom: schema.Spec.Target.URLFrom},
+			Target: &operatorv1alpha1.DatabaseTargetBinding{
+				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, URLFrom: schema.Spec.Target.URLFrom,
+				URLFromSecretProviderClass: schema.Spec.Target.URLFromSecretProviderClass,
+			},
 			Source: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: reference, Digest: digest("a"),
 				RegistryAuthFrom: schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),
@@ -92,17 +152,36 @@ const shadowVolume = "shadow-database-url"
 // return a Job without that mount, since every row built on it measures the
 // mount.
 func driftCheckedJob(asApply bool, edit func(*batchv1.Job)) func() (client.Object, error) {
+	return driftCheckedJobFor(asApply, false, edit)
+}
+
+// driftCheckedJobFor is driftCheckedJob, for a migration whose target and
+// shadow read their URLs from SecretProviderClass objects when fromClasses is
+// set. Then it refuses to return a Job that does not mount both as CSI
+// volumes.
+func driftCheckedJobFor(asApply, fromClasses bool, edit func(*batchv1.Job)) func() (client.Object, error) {
 	return func() (client.Object, error) {
 		migration := tenantMigration.DeepCopy()
 		migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
-			URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
+			URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
 		}}
+		if fromClasses {
+			migration.Spec.Target.URLFrom = nil
+			migration.Spec.Target.URLFromSecretProviderClass = &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "ledger-store", ObjectName: "url"}
+			migration.Spec.Policy.DriftCheck.Shadow = operatorv1alpha1.DatabaseTargetRef{
+				URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "ledger-store", ObjectName: "shadow-url"},
+			}
+			migration.Spec.Execution.ServiceAccountName = "ledger-operations"
+		}
 		job, err := migrationHistoryJobFor(migration)
 		if err != nil {
 			return nil, err
 		}
 		if !slices.ContainsFunc(job.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == shadowVolume }) {
 			return nil, fmt.Errorf("the drift-checked history Job mounts no %s volume", shadowVolume)
+		}
+		if fromClasses && (classVolume(job, "database-url") == nil || classVolume(job, shadowVolume) == nil) {
+			return nil, errors.New("the drift-checked history Job mounts its URLs from no SecretProviderClass")
 		}
 		if asApply {
 			job = asApplyJob(job, "ptah-m-", "history", "drift")
@@ -120,9 +199,9 @@ func operationContainer(job *batchv1.Job) *corev1.Container {
 }
 
 // credentialDeliveryRows hold the Job guard to where a Job of this release
-// keeps its credentials: each in a file of a Secret volume, the database URL
-// only on an operation that reads the database, and none in a container's
-// environment. A Job a release before this one created still has its
+// keeps its credentials: each in a file of a Secret volume, or a database URL
+// in a file a SecretProviderClass writes, the database URL only on an
+// operation that reads the database, and none in a container's environment. A Job a release before this one created still has its
 // credentials in its environment, and the manager still writes its cleanup
 // TTL.
 func credentialDeliveryRows(t *testing.T, c *catalog) {
@@ -146,6 +225,16 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 		shadowSchemaRow        = "manager dispatches a schema Apply Job mounting a shadow database URL"
 		shadowAsConfigRow      = "manager dispatches a migration History Job mounting its shadow database URL from a ConfigMap"
 		shadowInEnvironmentRow = "manager dispatches a migration History Job carrying its shadow database URL in its environment"
+
+		classPlanRow          = "manager dispatches a Plan Job mounting its database URLs from SecretProviderClass volumes"
+		classHistoryRow       = "manager dispatches a migration History Job mounting its target and shadow URLs from SecretProviderClass volumes"
+		classResolveRow       = "manager dispatches a Resolve Job mounting a database URL from a SecretProviderClass volume"
+		classOtherDriverRow   = "manager dispatches a Plan Job mounting its database URL through another CSI driver"
+		classWritableRow      = "manager dispatches a Plan Job mounting its SecretProviderClass volume writable"
+		classFSTypeRow        = "manager dispatches a Plan Job giving its SecretProviderClass volume a filesystem type"
+		classPublishSecretRow = "manager dispatches a Plan Job handing its SecretProviderClass volume a node publish Secret"
+		classAttributeRow     = "manager dispatches a Plan Job giving its SecretProviderClass volume a second attribute"
+		classUnnamedRow       = "manager dispatches a Plan Job whose CSI database URL volume names no SecretProviderClass"
 	)
 	databaseSecret := tenantSchema.Spec.Target.URLFrom
 	c.row(policyenv.Row{Name: fullPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
@@ -279,6 +368,45 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 			container.Env = append(container.Env, corev1.EnvVar{Name: runner.EnvShadowDatabaseURL, Value: "postgres://shadow.example/ledger"})
 		}))),
 	})
+	c.row(policyenv.Row{Name: classPlanRow, Do: as(manager, dryRunCreate(classPlanJob(nil)))})
+	c.row(policyenv.Row{Name: classHistoryRow, Do: as(manager, dryRunCreate(driftCheckedJobFor(false, true, nil)))})
+	c.row(policyenv.Row{
+		Name: classResolveRow, Deny: []string{jobGuard}, Message: workloadShapeMessage,
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			job, err := resolveJob()
+			if err == nil {
+				job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+					Name: "database-url", VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
+						Driver: workload.SecretsStoreCSIDriver, ReadOnly: ptr.To(true),
+						VolumeAttributes: map[string]string{workload.SecretProviderClassVolumeAttribute: "orders-store"},
+					}},
+				})
+			}
+			return job, err
+		})),
+	})
+	// Each edits the database URL volume of a Plan whose URLs come from
+	// SecretProviderClass objects, so that one clause of the guard refuses it.
+	for _, row := range []struct {
+		name string
+		edit func(*corev1.CSIVolumeSource)
+	}{
+		{classOtherDriverRow, func(csi *corev1.CSIVolumeSource) { csi.Driver = "csi.example.com" }},
+		{classWritableRow, func(csi *corev1.CSIVolumeSource) { csi.ReadOnly = ptr.To(false) }},
+		{classFSTypeRow, func(csi *corev1.CSIVolumeSource) { csi.FSType = ptr.To("ext4") }},
+		{classPublishSecretRow, func(csi *corev1.CSIVolumeSource) {
+			csi.NodePublishSecretRef = &corev1.LocalObjectReference{Name: "orders-store-credentials"}
+		}},
+		{classAttributeRow, func(csi *corev1.CSIVolumeSource) { csi.VolumeAttributes["usePodIdentity"] = "true" }},
+		{classUnnamedRow, func(csi *corev1.CSIVolumeSource) {
+			csi.VolumeAttributes = map[string]string{"usePodIdentity": "true"}
+		}},
+	} {
+		c.row(policyenv.Row{
+			Name: row.name, Deny: []string{jobGuard}, Message: workloadShapeMessage,
+			Do: as(manager, dryRunCreate(classPlanJob(func(job *batchv1.Job) { row.edit(classVolume(job, "database-url")) }))),
+		})
+	}
 	c.row(policyenv.Row{Name: releasedCleanupRow, Do: func(ctx context.Context, env *policyenv.Env) error {
 		return as(manager, patchStored(cleanupFixtures.released, func(stored *batchv1.Job) {
 			stored.Spec.TTLSecondsAfterFinished = ptr.To(int32(300))
@@ -314,32 +442,56 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard mounts a database URL on any operation", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
-			`volume.name == "database-url" && has(volume.secret) && (`, `volume.name == "database-url" && has(volume.secret) && (true || `),
-		Breaks: []string{resolveDatabaseRow}, Admits: true,
+			`volume.name == "database-url" && `+urlVolumeSource+` && (`, `volume.name == "database-url" && `+urlVolumeSource+` && (true || `),
+		Breaks: []string{resolveDatabaseRow, classResolveRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard mounts a development database URL on any operation", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
-			`volume.name == "development-database-url" && has(volume.secret) && object.metadata.labels["operator.ptah.run/operation"] == "plan"`,
-			`volume.name == "development-database-url" && has(volume.secret)`),
+			`volume.name == "development-database-url" && `+urlVolumeSource+` && object.metadata.labels["operator.ptah.run/operation"] == "plan"`,
+			`volume.name == "development-database-url" && `+urlVolumeSource),
 		Breaks: []string{observeDevelopmentRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard mounts a database URL from any source", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
-			`volume.name == "database-url" && has(volume.secret)`, `volume.name == "database-url"`),
-		Breaks: []string{databaseAsConfigRow}, Admits: true,
+			`volume.name == "database-url" && `+urlVolumeSource, `volume.name == "database-url"`),
+		Breaks: []string{databaseAsConfigRow, classOtherDriverRow, classWritableRow, classFSTypeRow, classPublishSecretRow, classAttributeRow, classUnnamedRow},
+		Admits: true,
 	})
+	// Each clause of the CSI source, removed, admits the one row built to fail
+	// it alone; the source removed refuses the two Jobs a class reaches.
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts a database URL from no SecretProviderClass", Policies: []string{jobGuard},
+		Apply:  policyenv.RewriteValidations(jobGuard, workloadShapeMessage, ` || (has(volume.csi) && `, ` || (false && `),
+		Breaks: []string{classPlanRow, classHistoryRow},
+	})
+	for _, mutation := range []struct {
+		name, clause, row string
+	}{
+		{"Job write guard mounts a database URL through any CSI driver", `volume.csi.driver == "secrets-store.csi.k8s.io" && `, classOtherDriverRow},
+		{"Job write guard mounts a writable SecretProviderClass volume", `has(volume.csi.readOnly) && volume.csi.readOnly && `, classWritableRow},
+		{"Job write guard lets a SecretProviderClass volume choose a filesystem", `!has(volume.csi.fsType) && `, classFSTypeRow},
+		{"Job write guard lets a SecretProviderClass volume take a node publish Secret", `!has(volume.csi.nodePublishSecretRef) && `, classPublishSecretRow},
+		{"Job write guard lets a SecretProviderClass volume carry more attributes", `volume.csi.volumeAttributes.size() == 1 && `, classAttributeRow},
+		{"Job write guard mounts a CSI database URL naming no SecretProviderClass", ` && "secretProviderClass" in volume.csi.volumeAttributes`, classUnnamedRow},
+	} {
+		c.mutation(policyenv.Mutation{
+			Name: mutation.name, Policies: []string{jobGuard},
+			Apply:  policyenv.RewriteValidations(jobGuard, workloadShapeMessage, mutation.clause, ""),
+			Breaks: []string{mutation.row}, Admits: true,
+		})
+	}
 	const (
-		shadowClause    = `(volume.name == "shadow-database-url" && has(volume.secret) && `
+		shadowClause    = `(volume.name == "shadow-database-url" && ` + urlVolumeSource + ` && `
 		shadowComponent = `object.metadata.labels["app.kubernetes.io/component"] == "migration-operation" && `
 		shadowOperation = `object.metadata.labels["operator.ptah.run/operation"] in ["history", "apply"])`
 	)
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard mounts no shadow database", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
-			shadowClause, `(volume.name == "shadow-database-url-retired" && has(volume.secret) && `),
-		Breaks: []string{shadowHistoryRow, shadowApplyRow},
+			shadowClause, `(volume.name == "shadow-database-url-retired" && `+urlVolumeSource+` && `),
+		Breaks: []string{shadowHistoryRow, shadowApplyRow, classHistoryRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard mounts a shadow database only on a history read", Policies: []string{jobGuard},
@@ -375,6 +527,7 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 		Breaks: []string{
 			overBoundRow, urlInEnvironmentRow, ungrantedSecretRow, httpsTokenRow, resolveDatabaseRow, observeDevelopmentRow, databaseAsConfigRow,
 			shadowResolveRow, shadowSchemaRow, shadowAsConfigRow, shadowInEnvironmentRow,
+			classResolveRow, classOtherDriverRow, classWritableRow, classFSTypeRow, classPublishSecretRow, classAttributeRow, classUnnamedRow,
 		},
 	})
 }

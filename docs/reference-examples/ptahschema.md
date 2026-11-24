@@ -161,6 +161,46 @@ spec:
   interval: 30m
 ```
 
+### The URL from a secret store, through a SecretProviderClass
+
+The URL comes from a store the Secrets Store CSI driver has a provider for,
+such as Vault, and no Kubernetes Secret holds it. `urlFromSecretProviderClass`
+names a `SecretProviderClass` in the same namespace and the object it writes
+the URL as. Each operation Pod mounts the class as its database URL volume, and
+the driver reads the store when the Pod starts, with the Pod's ServiceAccount
+token. The manager reads neither the class nor the store, and the class is
+yours to create.
+
+The store trusts the account the operation Pods run as, so
+`execution.serviceAccountName` names one, and not `default`. Bind the store's
+role to that account and to an audience that no token in the Pod carries:
+[Credentials from a SecretProviderClass](../credentials-and-admission/#secret-provider-class)
+says why, and what the class has to hold.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFromSecretProviderClass:
+      name: orders-database
+      # The objectName the class gives the URL, or its objectAlias.
+      objectName: url
+  desired:
+    ociRef: oci://ghcr.io/example/orders-schema:1.4.0
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  execution:
+    # The account the store's role is bound to. Only the operation Pods run as it.
+    serviceAccountName: orders-operations
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use

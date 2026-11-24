@@ -178,7 +178,11 @@ The operator separates five authorities:
    who made it and the migration records.
 4. A Job receives only the credentials needed for its fixed operation, as
    [files in same-namespace Secret volumes](../../reference/credentials-and-admission/#credential-files)
-   that the kubelet mounts in the one container that needs each.
+   that the kubelet mounts in the one container that needs each. A database
+   URL can instead come from a
+   [SecretProviderClass](../../reference/credentials-and-admission/#secret-provider-class),
+   as a file in a CSI volume mounted the same way, which the Secrets Store CSI
+   driver reads from the store as the Pod's ServiceAccount.
 5. A realm administrator decides which namespaces may manage a database more
    than one namespace reaches, by writing a cluster-scoped `PtahRealm`. An
    author names a realm and cannot grant it. See
@@ -715,10 +719,16 @@ Vault's Kubernetes auth method does that for a role that sets no `audience`:
 measured with Vault 2.0.4 on kind, the result token of an operation Pod logged in
 through such a role, and a role with `audience` set refused it. Set `audience`
 on every Vault role, or any other token reviewer's binding, that names the
-ServiceAccount your operations run as. Bind no cloud workload identity to that
-ServiceAccount: on GKE, Workload Identity serves the bound Google identity to
-every container in the Pod through the node's metadata server, the container
-that holds the database URL included.
+ServiceAccount your operations run as. A role a
+[SecretProviderClass](../../reference/credentials-and-admission/#secret-provider-class-account)
+reads the database URL through is bound to that account on purpose, so the
+audience is what keeps the result token out of it. Bind no cloud workload
+identity to that ServiceAccount: on GKE, Workload Identity serves the bound
+Google identity to every container in the Pod through the node's metadata
+server, the container that holds the database URL included. No cloud provider
+of the Secrets Store CSI driver has been run. Each one binds the Pod's
+ServiceAccount to a cloud identity, so this rule stands for them until a run
+shows what such a binding gives the container that runs Ptah.
 
 When `resultDelivery.enabled=false`, legacy Jobs instead write one frame to
 stdout. A Plan payload in that frame is sealed to a manager process key;

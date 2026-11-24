@@ -31,7 +31,7 @@ func realmSchemaFixture(namespace, name, key string, shared bool) *operatorv1alp
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: key,
 				SharedRealm:     shared,
-				URLFrom: corev1.SecretKeySelector{
+				URLFrom: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},
@@ -511,7 +511,7 @@ func TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob(t *testing.T) {
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          schema.Spec.Target.Engine,
 				CoordinationKey: schema.Spec.Target.CoordinationKey,
-				URLFrom: corev1.SecretKeySelector{
+				URLFrom: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},

@@ -547,6 +547,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:15777d365382dfc21eb4b5304af27ecfa4749e5da96df58d2750b3cd2e7341ba",
       "reason": "The comment on the Pending migration phase in api/v1alpha1 now says that a ConfigMap source, which the manager reads itself, moves a new migration straight to Reading, and only an OCI, Git or HTTPS source to Resolving. No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:493e5f106edd552d9fda474fe680be4dd20b101e4060d212c098c60646c41d39",
+      "reason": "The API types the runner links gained urlFromSecretProviderClass beside urlFrom in a target, a development database and a drift check's shadow, and urlFrom became optional (#831). The runner reads a database URL from the same file under the same variable whether a Secret volume or a SecretProviderClass's CSI volume holds it. A Job that names a development database file and gets no URL from it, because the class did not write the object or the file is empty, is refused with missing_dev before the child, rather than plan without a development database. Only a Plan's Job names that file, and no variable was added. The refusal is an error code and message in the frame every release reads, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

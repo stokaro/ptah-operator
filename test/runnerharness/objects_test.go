@@ -82,7 +82,7 @@ func databaseTarget(engine string) operatorv1alpha1.DatabaseTargetSpec {
 	return operatorv1alpha1.DatabaseTargetSpec{
 		Engine:          engineKind(engine),
 		CoordinationKey: "harness/" + engine,
-		URLFrom: corev1.SecretKeySelector{
+		URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: databaseSecret},
 			Key:                  databaseKey,
 		},
@@ -460,7 +460,7 @@ type migrationRun struct {
 func (m *migrationRun) checkDrift(shadowURL string) {
 	m.shadowURL = shadowURL
 	m.migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
-		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: shadowSecret}, Key: databaseKey},
+		URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: shadowSecret}, Key: databaseKey},
 	}}
 }
 

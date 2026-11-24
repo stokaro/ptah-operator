@@ -1018,7 +1018,7 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "team-a/orders-primary",
-				URLFrom: corev1.SecretKeySelector{
+				URLFrom: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},
@@ -1104,7 +1104,7 @@ func migrationClaim(
 		operation.CoordinationDigest = coordinationDigest
 		operation.Target = &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  migration.Spec.Target.Engine,
-			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
+			URLFrom: migration.Spec.Target.URLFrom.DeepCopy(),
 		}
 	}
 	name, err := (fakeJobs{}).NameForMigration(migration, *operation)

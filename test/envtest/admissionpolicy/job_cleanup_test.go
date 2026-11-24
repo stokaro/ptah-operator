@@ -95,6 +95,7 @@ func migrationHistoryJobFor(migration *operatorv1alpha1.PtahMigration) (*batchv1
 		},
 		Target: &operatorv1alpha1.DatabaseTargetBinding{
 			Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, URLFrom: migration.Spec.Target.URLFrom,
+			URLFromSecretProviderClass: migration.Spec.Target.URLFromSecretProviderClass,
 		},
 	}
 	name, err := workload.NameForMigration(migration, operation)

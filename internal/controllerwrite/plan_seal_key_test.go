@@ -56,7 +56,7 @@ func twoReplicaBuilders(t *testing.T) (dispatcher, validating workload.Builder) 
 func realPlanSchemaFixture(t *testing.T) *operatorv1alpha1.PtahSchema {
 	t.Helper()
 	schema := schemaFixture(operatorv1alpha1.OperationPlan)
-	schema.Spec.Target.URLFrom = corev1.SecretKeySelector{
+	schema.Spec.Target.URLFrom = &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 	}
 	schema.Spec.Target.CoordinationKey = "tenant-a/orders-primary"
@@ -68,7 +68,7 @@ func realPlanSchemaFixture(t *testing.T) *operatorv1alpha1.PtahSchema {
 	operation.JobUID = ""
 	operation.Target = &operatorv1alpha1.DatabaseTargetBinding{
 		Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
-		URLFrom: corev1.SecretKeySelector{
+		URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 		},
 	}

@@ -603,7 +603,7 @@ func firstDifferentLine(want, got []byte) (int, string, string) {
 
 // goldenDriftCheck is a drift check whose shadow is a Secret of its own.
 func goldenDriftCheck() *operatorv1alpha1.MigrationDriftCheck {
-	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
 	}}}
 }

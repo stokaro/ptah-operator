@@ -63,7 +63,7 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```
 
 ### A fresh database, bootstrapped from a checkpoint
@@ -135,7 +135,7 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```
 
 ### One version, on an engine with no DDL transaction
@@ -177,7 +177,7 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```
 
 ### A version, then two repeatable migrations
@@ -231,5 +231,5 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```

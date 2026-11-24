@@ -11,6 +11,7 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // The reachability row's fixtures: a schema and a migration, each on a database
@@ -44,7 +45,7 @@ func targetRefusedCredentials(conditions []metav1.Condition, generation int64, u
 	return reachable != nil && reachable.Status == metav1.ConditionFalse &&
 		reachable.Reason == string(ptahv1alpha1.ReasonAuthenticationFailed) &&
 		reachable.ObservedGeneration == generation &&
-		reachable.Message == targetfailure.Message(dataplane.TargetAuthenticationFailed, url)
+		reachable.Message == targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.Source{Secret: &url})
 }
 
 // targetAnsweredAgain is a resource at generation whose last operation opened

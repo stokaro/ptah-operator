@@ -312,12 +312,17 @@ resources, or command arguments.
 
 ### Can I keep database credentials in Vault or a cloud secret manager? {#external-secret-store}
 
-Yes. A tool writes the store's value into a Kubernetes Secret and
-`spec.target.urlFrom` names that Secret. External Secrets Operator and the Vault
-Secrets Operator were both run this way against Vault, with rotation measured.
-No cloud secret manager has been run. The operator has no native integration, so
-it holds no credential for the store.
+Yes, two ways. `spec.target.urlFromSecretProviderClass` names a
+`SecretProviderClass` of the Secrets Store CSI driver, and the operation Pod
+mounts it, so the URL comes from the store with no Kubernetes Secret in between.
+The store trusts the Pod's ServiceAccount, which the resource names in
+`spec.execution.serviceAccountName`. Or a tool writes the store's value into a
+Kubernetes Secret and `spec.target.urlFrom` names that Secret: External Secrets
+Operator and the Vault Secrets Operator were both run this way. Every run was
+against Vault, with rotation measured, and no cloud secret manager has been run.
+Either way the manager holds no credential for the store.
 
+- [Credentials from a SecretProviderClass](../reference/credentials-and-admission/#secret-provider-class)
 - [Credentials from an external secret store](../reference/credentials-and-admission/#external-secret-stores)
 
 ## Reading status, and reporting {#g-status}

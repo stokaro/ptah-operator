@@ -269,6 +269,49 @@ spec:
         - public.job_queue
 ```
 
+### The URLs from a secret store, through SecretProviderClasses
+
+The target's URL and the drift check's shadow URL come from a store the
+Secrets Store CSI driver has a provider for, such as Vault. Each names a
+`SecretProviderClass` in the same namespace and the object it writes the URL
+as, and the History and Apply Pods mount both as their URL volumes. The shadow
+has a class of its own: the driver writes every object a class lists into
+every volume that mounts it, so a class that listed both URLs would put both
+files in each of those volumes.
+
+As for a `PtahSchema`, `execution.serviceAccountName` names the account the
+store's role is bound to, and not `default`;
+[Credentials from a SecretProviderClass](../credentials-and-admission/#secret-provider-class)
+says what the role and the class have to hold.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFromSecretProviderClass:
+      name: orders-database
+      objectName: url
+  artifact:
+    ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
+  policy:
+    driftCheck:
+      shadow:
+        urlFromSecretProviderClass:
+          name: orders-shadow-database
+          objectName: url
+  execution:
+    serviceAccountName: orders-operations
+```
+
 ### A database another namespace manages too
 
 A key reaches no further than its namespace, so a database that resources in

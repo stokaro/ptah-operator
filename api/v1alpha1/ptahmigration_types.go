@@ -285,15 +285,17 @@ type MigrationPolicy struct {
 
 // MigrationDriftCheck names the database Ptah replays the applied history into.
 type MigrationDriftCheck struct {
-	// Shadow is a Secret key in this namespace holding the URL of an empty
-	// database of the target's engine. Ptah replays the applied migrations
-	// into it, compares the result with the target, and empties it again. It
-	// refuses a shadow that holds anything, and one that is the target under
-	// another name. Only the executor Pod reads the Secret, the way it reads
-	// the target's.
+	// Shadow names where the URL of an empty database of the target's engine
+	// comes from: a Secret key or a SecretProviderClass object in this
+	// namespace. Ptah replays the applied migrations into it, compares the
+	// result with the target, and empties it again. It refuses a shadow that
+	// holds anything, and one that is the target under another name. Only the
+	// executor Pod reads the URL, the way it reads the target's.
 	//
 	// Give each resource its own shadow: two checks that share one at the same
-	// time find each other's tables in it.
+	// time find each other's tables in it. A class shadow names a class other
+	// than the target's, since each URL is its own volume and one Pod would
+	// mount the class twice.
 	Shadow DatabaseTargetRef `json:"shadow"`
 
 	// Exclude names schema objects the comparison leaves out on both sides,
@@ -325,15 +327,17 @@ type MigrationDriftCheck struct {
 // both would have fields that mean nothing in one of them.
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
-// +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
-// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional) || !self.policy.driftCheck.shadow.urlFrom.optional))",message="policy.driftCheck.shadow.urlFrom must name a required Secret key"
-// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || self.policy.driftCheck.shadow.urlFrom.name != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key != self.target.urlFrom.key",message="policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom"
+// +kubebuilder:validation:XValidation:rule="!has(self.target.urlFrom) || (self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional))",message="target.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFrom) || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional) || !self.policy.driftCheck.shadow.urlFrom.optional))",message="policy.driftCheck.shadow.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFrom) || !has(self.target.urlFrom) || self.policy.driftCheck.shadow.urlFrom.name != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key != self.target.urlFrom.key",message="policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass) || !has(self.target.urlFromSecretProviderClass) || self.policy.driftCheck.shadow.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name",message="policy.driftCheck.shadow.urlFromSecretProviderClass must name another SecretProviderClass than target.urlFromSecretProviderClass"
+// +kubebuilder:validation:XValidation:rule="(!has(self.target.urlFromSecretProviderClass) && (!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass))) || (has(self.execution) && has(self.execution.serviceAccountName) && self.execution.serviceAccountName.size() > 0 && self.execution.serviceAccountName != 'default')",message="a URL from a SecretProviderClass needs execution.serviceAccountName to name an account other than default"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.https) || self.artifact.https.format != 'File'",message="artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"
 type PtahMigrationSpec struct {
 	// Target is the database this sequence runs against, named through a Secret
-	// the manager never reads.
+	// or a SecretProviderClass the manager never reads.
 	Target DatabaseTargetSpec `json:"target"`
 
 	// Artifact is the migration directory this history is matched against:

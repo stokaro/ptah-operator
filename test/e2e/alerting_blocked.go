@@ -44,7 +44,7 @@ func alBlockedFixture(template *ptahv1.PtahSchema, name, secret, policy string) 
 	r.Spec.Dev = nil
 	r.Spec.Target.RealmRef = nil
 	r.Spec.Target.CoordinationKey = "e2e/alerting/blocked/" + name
-	r.Spec.Target.URLFrom.Name = secret
+	alSecretTarget(&r.Spec.Target, secret)
 	r.Spec.Desired.VerificationPolicyFrom.Name = policy
 	r.Spec.Policy = ptahv1.ReconciliationPolicy{Apply: ptahv1.ApplyPolicyOnApproval, AllowDestructive: true, LockTimeout: template.Spec.Policy.LockTimeout}
 	return r, nil

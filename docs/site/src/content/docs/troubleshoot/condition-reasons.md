@@ -317,12 +317,13 @@ one consumed its approval.
 A shadow the runner can tell is unusable never reaches an Apply: the history
 read that publishes the plan refuses it before anyone can approve a run
 against it, and says `ShadowDatabaseUnavailable` on `Progressing` with a
-reason code: `missing_shadow` when the Secret key holds no
-URL, `invalid_shadow` when the URL is not a PostgreSQL or MySQL URL with a host
+reason code: `missing_shadow` when the Secret key or the
+SecretProviderClass object holds no URL, or the class writes no such object,
+`invalid_shadow` when the URL is not a PostgreSQL or MySQL URL with a host
 and a database, and `shadow_is_target` when it names the target's server and
 database, under any user or `search_path`. No plan is published, the read is
 tried again after `spec.execution.failureRetryInterval`, and the message names
-the Secret and key to fix.
+the Secret and key, or the class and object, to fix.
 
 The message names counts, stages and reason codes, never Ptah's own sentences:
 those can quote what the shadow database's driver said, or a default
@@ -478,15 +479,17 @@ the login should not match, or grant the privilege.
 
 When an operation cannot open its connection to the target database, what the
 operator says about it starts with the kind of failure Ptah reported, then
-says what that kind means and names the Secret key the operation read the URL
-from:
+says what that kind means and names the Secret key, or the SecretProviderClass
+object, the operation read the URL from:
 
 ```
 database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret "orders-database" holds under key "url", and that the database is running and accepts connections from this namespace
 ```
 
 The Secret and the key are the ones `spec.target.urlFrom` named when the
-operation started. On every stage the sentence is the message of
+operation started. A target from a SecretProviderClass reads `the URL that
+SecretProviderClass "orders-database" writes as object "url"` in their place,
+for the class and the object `spec.target.urlFromSecretProviderClass` named. On every stage the sentence is the message of
 `DatabaseReachable=False`, whose reason names the kind. Where else it appears
 depends on the stage that failed:
 
@@ -500,7 +503,8 @@ depends on the stage that failed:
 `kubectl ptah schema` and `kubectl ptah migration` print each condition with
 its message, and the resource's status keeps the sentence whole. An Event
 keeps 512 bytes of it, which holds the whole sentence while the Secret's name
-and key together stay under 230 bytes.
+and key together stay under 230 bytes, or the class's name and object name
+under 216.
 
 | Kind | `DatabaseReachable` reason | What Ptah found | Where to look |
 | --- | --- | --- | --- |
@@ -571,6 +575,14 @@ waits the same interval. When the history read after that failure failed too,
 Ptah reports the run `unknown`, and the message is "Ptah stopped before it
 selected any migration and could not read the history after it, so it ran
 nothing"; nothing ran, so no person has to account for it.
+
+A `PtahSchema` Plan whose `spec.dev` holds no URL never starts Ptah, which would
+otherwise plan without a development database. The runner refuses it with
+`missing_dev` when the Secret key or the SecretProviderClass object is empty,
+or the class writes no such object, and the resource reports
+`ReconciliationFailed=True` with reason `OperationFailed` and tries again after
+`spec.execution.failureRetryInterval`. The message names the Secret and key, or
+the class and object, to fix.
 
 ## A desired file Ptah could not read
 

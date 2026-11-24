@@ -17,6 +17,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/sourceview"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // A scenario step that runs `kubectl ptah schema` or `kubectl ptah migration`
@@ -227,9 +228,9 @@ func demoSchemaBlocked() schemaview.View {
 func demoSchemaFailed() schemaview.View {
 	view := fromConfigMap(demoSchema(string(operatorv1alpha1.PhaseFailed)), "storefront-v1")
 	view.Observation = nil
-	unreachable := targetfailure.Message(dataplane.TargetDatabaseUnreachable, corev1.SecretKeySelector{
+	unreachable := targetfailure.Message(dataplane.TargetDatabaseUnreachable, urlsource.OfSecret(corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database-broken"}, Key: "url",
-	})
+	}))
 	view.Conditions = demoConditions(
 		metav1.Condition{Type: "Ready", Status: "False", Reason: "OperationFailed", Message: "Reconciliation did not complete"},
 		metav1.Condition{Type: "ReconciliationFailed", Status: "True", Reason: "OperationFailed", Message: unreachable},

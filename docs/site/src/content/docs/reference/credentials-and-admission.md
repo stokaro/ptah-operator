@@ -33,8 +33,10 @@ contract that keeps it true. The operational view is
 | Resolve main, HTTPS source | HTTPS credential and its grants | no | the URL, held to the pinned download digest, and the optional CA |
 | HTTPS fetch init, HTTPS source | HTTPS credential and its grants | no | the bound download, held to its digest and to the bound content digest |
 
-The controller sees only Secret names and keys; the kubelet reads the Secrets
-for the Job's Pod. A migration reads a local directory rather than an
+The controller sees only the names of Secrets and their keys, and of
+SecretProviderClasses and their objects. The kubelet reads the Secrets for the
+Job's Pod, and the Secrets Store CSI driver reads a store for it. A migration
+reads a local directory rather than an
 OCI reference for the same reason the table splits every row: passing
 `oci://…` to the process that runs SQL would put registry and database
 credentials in one process.
@@ -42,7 +44,10 @@ credentials in one process.
 ### Credentials are files {#credential-files}
 
 Every credential reaches the container that needs it as a file in a read-only
-Secret volume, mounted in that container and no other:
+Secret volume, mounted in that container and no other. A database URL from
+[a SecretProviderClass](#secret-provider-class) is a file in a read-only CSI
+volume instead, in the same directory under the object's name, and named by
+the same variable:
 
 | Credential | File | Variable naming the file |
 | --- | --- | --- |
@@ -72,13 +77,15 @@ stopped, though the Pod is kept. While the
 Pod runs, root on the node can still read the file and the environment of the
 Ptah process.
 
-Every file is mode `0440`, readable by root and by group 65532, the Pod's
-`fsGroup`, and by nobody else. With an `fsGroup` the kubelet gives each file of a
+Every file of a Secret volume is mode `0440`, readable by root and by group
+65532, the Pod's `fsGroup`, and by nobody else. With an `fsGroup` the kubelet gives each file of a
 Secret volume to that group with group read, whatever mode the Job declares, so a
 declared `0400` reads back as `0440`. Owning the file by the operation's user takes
 the `defaultUser` and `user` volume fields, which need the alpha
 `AtomicWriteVolumeUserFields` feature gate in every Kubernetes minor the operator
-supports and which the Job admission guard refuses.
+supports and which the Job admission guard refuses. A file a SecretProviderClass
+writes is `0644` and owned by root, as
+[What the class writes](#secret-provider-class-objects) says.
 
 The registry, Git and HTTPS grants stay in the environment: the `registry`,
 `allowPlainHTTP`, `caSHA256`, `host` and `knownHostsSHA256` keys of a credential
@@ -131,15 +138,203 @@ The dev database is a scratch database Ptah may use for a comparison. It
 reaches `Plan` and nothing else — never Observe, never Apply, never any
 migration operation — and the runner redacts it alongside the target.
 
+## Credentials from a SecretProviderClass {#secret-provider-class}
+
+`urlFromSecretProviderClass` reads a database URL from a store with no
+Kubernetes Secret in between. It names a `SecretProviderClass` of the
+[Secrets Store CSI driver](https://secrets-store-csi-driver.sigs.k8s.io/) in
+the resource's namespace, and the object the class writes the URL as. A target,
+a `PtahSchema`'s `spec.dev` and a `PtahMigration`'s
+`spec.policy.driftCheck.shadow` each name exactly one of `urlFrom` and
+`urlFromSecretProviderClass`:
+
+```yaml
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFromSecretProviderClass:
+      name: orders-database
+      objectName: url
+  execution:
+    serviceAccountName: orders-operations
+```
+
+The container that runs Ptah mounts the class as its URL volume: a read-only
+CSI volume of the driver `secrets-store.csi.k8s.io` whose one attribute is the
+class's name, at the path [the URL file](#credential-files) always has. When
+the Pod starts, the kubelet asks the node's driver to mount the volume, the
+driver gives the class and a token for the Pod's ServiceAccount to the class's
+provider, and the provider reads the store and writes each object the class
+lists as a file. The runner reads the file as it reads one from a Secret. The
+URL reaches that container and no other. The manager reads neither the class,
+the store nor the file, and has no permission to: a class that is missing
+reaches the resource the way a missing Secret does, as a
+[`PodConfigurationError`](#external-secret-stores-not-synced) that carries the
+driver's words. [Admission](#admission) holds every operation Pod to the volume
+its Job declares, so neither a webhook nor another writer can point it at
+another class or another driver.
+
+The operator supports Vault, through the Vault provider and Vault's
+Kubernetes auth method, with a [static role](#secret-provider-class-rotation)
+for the database user; [What was run](#secret-provider-class-measured) lists
+the versions. The operator names a class and an object and nothing else, so
+another provider gets the same volume, but no other provider has been run. A
+cloud provider authenticates through a workload identity bound to the Pod's
+ServiceAccount, and [the security page](../../use/security/#pod-logs-carry-plans)
+says why no workload identity is bound to the operation account.
+
+### The account the store trusts {#secret-provider-class-account}
+
+The provider authenticates as the Pod's ServiceAccount, so the account the
+operation Pods run as becomes an identity the store trusts. A resource that
+names a class names that account in `spec.execution.serviceAccountName`, and
+the API refuses one that leaves it unset or names `default`:
+
+```text
+a URL from a SecretProviderClass needs execution.serviceAccountName to name an account other than default
+```
+
+Give that account to the operation Pods and to nothing else. Whoever may create
+a Pod as it in the namespace can read the URL. That is the reach the namespace
+already gives over a Secret, under
+[the release namespace rule](../../use/security/#release-namespace), but the
+account is now one a store trusts.
+
+Bind the store's role to an audience that no token in the Pod carries. Every
+operation Pod projects a token for the result receiver, with the audience
+`operator.ptah.run/results`, and a Vault role that binds no audience accepts
+it: in the run, a Pod running as the operation account logged in to Vault with
+that token. With `audience=vault` on the role and the same audience in the
+driver's `tokenRequests`, the result token and a token for the API server were
+both refused, and the volume still mounted. The Pod itself mounts no token:
+the kubelet requests the driver's token and hands it to the driver on the
+node.
+
+```sh
+helm upgrade --install csi-secrets-store \
+  secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system --set 'tokenRequests[0].audience=vault'
+vault write auth/kubernetes/role/orders-operations \
+  bound_service_account_names=orders-operations \
+  bound_service_account_namespaces=application \
+  policies=orders-database audience=vault ttl=10m
+```
+
+```yaml
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: orders-database
+  namespace: application
+spec:
+  provider: vault
+  parameters:
+    vaultAddress: http://vault.vault.svc:8200
+    roleName: orders-operations
+    audience: vault
+    objects: |
+      - objectName: url
+        secretPath: secret/data/ptah/orders
+        secretKey: url
+```
+
+The operator cannot read the role or the driver's settings, so nothing it
+reports says that an audience is missing.
+
+### What the class writes {#secret-provider-class-objects}
+
+The URL is one object, a complete URL, as it is in a Secret: any reserved
+character in the password percent-encoded, and no trailing newline. Neither the
+driver nor the Vault provider templates a value, so keep the URL in the store as
+one field. A store that holds a user name and a password as two fields gives the
+Pod two files and no URL.
+
+`objectName` is the file the class writes the URL to: the object's `objectName`
+in the class, or its `objectAlias` where the class sets one. The API holds it to
+one file name. A name the class does not write still mounts, and leaves no file,
+and an object the class writes empty reads the same:
+
+| URL | What the operation reports |
+| --- | --- |
+| The target's | `missing_target: the operation found no URL in file "url" (missing or empty) in the volume of SecretProviderClass "orders-database". Check that the class writes an object under that name, as its objectName or its objectAlias` |
+| A drift check's shadow | The history read publishes no plan, with reason `ShadowDatabaseUnavailable`: `missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty). Check the URL that SecretProviderClass "orders-shadow-database" writes as object "url"`, and why the shadow has to be named |
+| A `PtahSchema`'s development database | The Plan stops before Ptah starts, and is retried: `missing_dev: the Plan found no URL in file "dev-url" (missing or empty) in the volume of SecretProviderClass "orders-development-database", and computes no plan without its development database. Check that the class writes an object under that name, as its objectName or its objectAlias` |
+
+The API refuses a development database or a shadow that names the target's
+class, whichever object it names: each URL is its own volume, and the Pod would
+mount the class twice. The driver writes every object a class lists into every
+volume that mounts the class, so a class that lists the target's URL beside
+another one puts both files in the target's volume, and an operation that reads
+only the target, such as a `PtahSchema`'s Observe, holds the other URL too.
+Give each URL a class of its own that lists only that URL.
+
+List no `secretObjects` in a class an operation mounts. With the driver chart's
+`syncSecret.enabled`, the driver copies what it mounted into a Secret owned by
+the mounting Pod's owner, the operation's Job, and the URL is in a Kubernetes
+Secret again, which this path exists to avoid.
+
+The file is mode `0644` and owned by root, not the `0440` and group 65532 of a
+Secret volume's file. The driver declares `fsGroupPolicy:
+ReadWriteOnceWithFSType`, and an ephemeral volume has no file system type, so
+the kubelet does not give the file to the Pod's `fsGroup`. The volume is mounted
+in the container that runs Ptah and in no other, and every process in that
+container runs as the operation's user, so the wider mode lets no process read
+the file that the mode of a Secret volume's file keeps out. Root on the node can
+read either.
+
+### Rotation and generated users {#secret-provider-class-rotation}
+
+The provider reads the store when the Pod starts, so an operation that starts
+after the store moved reads the new value, with no lag behind a Secret a tool
+writes. In the run, a Pod created in the second the password changed in Vault
+and in the database planned with the new one. The runner reads the file once,
+before it starts Ptah, so a running operation keeps the URL it started with,
+and [When the credential rotates](#external-secret-stores-rotation) holds for
+it unchanged: keep the user name, change the password, and rotate with no Apply
+running. With the driver's `enableSecretRotation` set, a running Pod's file
+took the new value 73 seconds after the store did, and nothing in the Pod read
+it again.
+
+A Vault static role (`database/static-roles`) keeps the user name and rotates
+the password, which is that rotation. A user Vault's database secrets engine
+generates for each read cannot work, whichever way the URL arrives. Every
+mount reads the store again: in the run, two Pods that mounted in the same
+second got two users, and each republish of a running Pod made another. A plan
+binds the identity of its target, the user name included, so a Plan and its
+Apply always run as different users, and the runner refuses the Apply:
+`database target identity changed after planning`. The engine also writes the
+user name and the password as two files, and no URL.
+
+### What was run {#secret-provider-class-measured}
+
+The behavior in this section comes from one run, before the field existed, of
+the Plan Job the manager builds with only its URL volume replaced by the class:
+
+| Component | Version |
+| --- | --- |
+| Operator | the development tree after 0.2.18, with Ptah `v0.35.0` |
+| Kubernetes | `v1.36.4`, on kind `v0.33.0` |
+| Target | PostgreSQL `17.11` |
+| Secrets Store CSI driver | `v1.6.2`, chart `1.6.2` |
+| Store | Vault `2.0.4` in dev mode, chart `0.34.1`, `vault-csi-provider` `1.7.4`, KV version 2 |
+
+The runner read the file and Ptah planned. The password appeared in none of the
+Pod's logs, the Pod, the Job or the namespace's Events. Pod Security
+`restricted` admits the volume, and the Pod's volume came back as the Job's
+template wrote it, which is what [Pod admission](#admission) compares. Nothing
+else was run: no cloud secret manager, no Vault outside dev mode, no MySQL
+target, and no other Kubernetes minor.
+
 ## Credentials from an external secret store {#external-secret-stores}
 
-The operator reads a database URL from one place: the key of a Kubernetes Secret
-that `spec.target.urlFrom` names, in the resource's namespace. A tool that writes
-that Secret needs nothing from the operator, and the operator cannot tell which
-tool wrote it. The routing above does not change: the manager still cannot read
-the Secret, and the kubelet projects its key into
-[the database URL file](#credential-files) of the container that runs Ptah. The
-operator has no native integration with Vault or a cloud secret manager.
+With `urlFrom`, the operator reads a database URL from the key of a Kubernetes
+Secret in the resource's namespace. A tool that writes that Secret needs nothing
+from the operator, and the operator cannot tell which tool wrote it. The routing
+above does not change: the manager still cannot read the Secret, and the kubelet
+projects its key into [the database URL file](#credential-files) of the
+container that runs Ptah. [A SecretProviderClass](#secret-provider-class) is the
+other path, with no Secret in between.
 
 The behavior in this section comes from one run against these versions, not from
 reading the code. In that run no password appeared in status, Events, plans,
@@ -303,6 +498,25 @@ A new Secret UID changes nothing for the operator, which does not read the
 Secret: the plan that was waiting stayed current and ran. Neither tool changes the
 password in the database. Rotating it there is your step, or the store's.
 
+The Secrets Store CSI driver can write a Secret too: a class's `secretObjects`
+copies what it mounted into a Secret that `urlFrom` can name. A `PtahSchema`
+read one and reached `InSync` with the versions
+[What was run](#secret-provider-class-measured) lists. The operator does not
+prefer this path, and [`urlFromSecretProviderClass`](#secret-provider-class)
+replaces it:
+
+- The driver writes the Secret only while some Pod mounts the class. With no
+  such Pod, a read stops at `PodConfigurationError` with `secret "<name>" not
+  found`, so the path needs a Deployment that mounts the volume and does nothing
+  else, and the Secret belongs to that Deployment's ReplicaSet.
+- The Secret holds what the last Pod the driver reconciled had mounted, so it
+  can move backwards. After a rotation the Secret took the new value from a Pod
+  that had just mounted the class, the old value again 44 seconds later from
+  the holder's files, and the new value 28 seconds after that. An operation that
+  started in between read the old password.
+- With the chart's `syncSecret.enabled`, which the path needs, the driver's
+  ServiceAccount could `get` and `create` every Secret in the cluster.
+
 If the store holds a username and a password rather than a URL,
 `target.template` can build the URL. `urlquery` escapes what a password can hold;
 a password holding `@`, `/`, `:`, `%` and `+` connected through this template:
@@ -349,6 +563,15 @@ and the message carries what the kubelet wrote on that container, such as
 database URL was a variable too, so the message was the container's
 `secret "application-database" not found` or `couldn't find key url in Secret
 <namespace>/application-database`.
+
+A URL volume from [a SecretProviderClass](#secret-provider-class) stops the Pod
+the same way when the class is missing, with the driver's words:
+`MountVolume.SetUp failed for volume "database-url" : rpc error: code = Unknown
+desc = failed to get secretproviderclass <namespace>/orders-database, error:
+SecretProviderClass.secrets-store.csi.x-k8s.io "orders-database" not found`. It
+stops it too when the store refuses the provider's read. The provider's words
+then name what it read in the store and not the class, so the operator adds
+`(volume database-url reads SecretProviderClass <namespace>/orders-database)`.
 
 A `PodConfigurationError` Warning Event says the same. Those words hold the names
 of the Secret and the key and nothing the Secret holds. The resource reports this
@@ -526,6 +749,14 @@ So, for a rotation on this path:
 ## Admission
 
 The manager's own writes pass through two independent fail-closed layers.
+
+Both layers judge the URL volumes. The Job policy admits a
+`database-url`, `development-database-url` or `shadow-database-url` volume of
+two sources only: a Secret, or a read-only CSI volume of the driver
+`secrets-store.csi.k8s.io` with no file system type, no publish Secret, and the
+class's name as its one attribute. The controller-write webhook then rebuilds
+the Job from the claim, so the class is the one the claim bound, and the
+Pod-intent webhook holds each Pod to the volumes its template declares.
 
 **Typed policies**, one per kind and verb, reject objects outside their narrow
 structural form: Jobs, plan chunks, the ConfigMaps the manager creates -- a

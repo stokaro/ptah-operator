@@ -28,6 +28,11 @@ const (
 	// EnvDevelopmentDatabaseURLFile names the file holding the development
 	// database URL a Plan may use.
 	EnvDevelopmentDatabaseURLFile = "PTAH_OPERATOR_DEV_URL_FILE"
+	// CodeMissingDev is the runner's refusal of a Plan whose Job names a
+	// development database file that holds no URL: the file is missing or
+	// empty. A Plan is not computed without the development database its
+	// resource names.
+	CodeMissingDev = "missing_dev"
 	// EnvShadowDatabaseURLFile names the file holding the URL of the shadow
 	// database a migration's drift check replays into.
 	EnvShadowDatabaseURLFile = "PTAH_OPERATOR_SHADOW_DB_URL_FILE"

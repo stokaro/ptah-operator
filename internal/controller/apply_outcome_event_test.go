@@ -19,6 +19,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 const uncertainApplyFixedEvent = "Warning ApplyOutcomeUnknown Apply outcome is uncertain; observing database state"
@@ -78,7 +79,7 @@ func TestAnUncertainApplyEventCarriesTheKindsSentence(t *testing.T) {
 			t.Parallel()
 			schema, actual, recorder := harvestApplyFailure(t, &runner.ResultError{Code: string(kind), Message: frameText})
 			assertUnaccountedApply(t, actual)
-			want := uncertainApplyFixedEvent + ": " + targetfailure.Message(kind, schema.Spec.Target.URLFrom)
+			want := uncertainApplyFixedEvent + ": " + targetfailure.Message(kind, urlsource.Source{Secret: schema.Spec.Target.URLFrom})
 			if event := findEvent(recorder, "Warning ApplyOutcomeUnknown"); event != want {
 				t.Fatalf("ApplyOutcomeUnknown event = %q, want %q", event, want)
 			}
@@ -141,11 +142,11 @@ func TestAnUncertainApplyEventBoundsTheSentence(t *testing.T) {
 	long := corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: strings.Repeat("n", 253)}, Key: strings.Repeat("k", 253),
 	}
-	sentence := targetfailure.Message(dataplane.TargetTLSFailed, long)
+	sentence := targetfailure.Message(dataplane.TargetTLSFailed, urlsource.OfSecret(long))
 	if len(sentence) <= 512 {
 		t.Fatalf("the sentence is %d bytes, so this row bounds nothing", len(sentence))
 	}
-	got := uncertainApplyEvent(resultFailure(&runner.ResultError{Code: string(dataplane.TargetTLSFailed)}, long), false)
+	got := uncertainApplyEvent(resultFailure(&runner.ResultError{Code: string(dataplane.TargetTLSFailed)}, urlsource.OfSecret(long)), false)
 	if want := "Apply outcome is uncertain; observing database state: " + bounded(sentence, 512); got != want {
 		t.Fatalf("uncertainApplyEvent() = %q, want %q", got, want)
 	}
@@ -197,7 +198,7 @@ func TestNoApplyRunsBeforeTheProofOfAnApplyThatCouldNotOpenItsTarget(t *testing.
 
 	// The database stays closed: the proof's Observe fails with the same kind.
 	if _, err := reconciler.retryOperation(ctx, observing, nil, resultFailure(
-		&runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable)}, schema.Spec.Target.URLFrom,
+		&runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable)}, urlsource.Source{Secret: schema.Spec.Target.URLFrom},
 	)); err != nil {
 		t.Fatalf("retry the proof's Observe: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestNoApplyRunsBeforeTheProofOfAnApplyThatCouldNotOpenItsTarget(t *testing.
 		t.Fatalf("the failed proof left %#v, want its Observe claimed again", active)
 	}
 	assertDatabaseUnreached(t, retrying.Status.Conditions, operatorv1alpha1.ReasonDatabaseUnreachable,
-		targetfailure.Message(dataplane.TargetDatabaseUnreachable, schema.Spec.Target.URLFrom))
+		targetfailure.Message(dataplane.TargetDatabaseUnreachable, urlsource.Source{Secret: schema.Spec.Target.URLFrom}))
 	if pending := retrying.Status.PendingObservation; pending == nil || pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
 		t.Fatalf("the failed proof left PendingObservation = %#v, want OutcomeUnknown", pending)
 	}

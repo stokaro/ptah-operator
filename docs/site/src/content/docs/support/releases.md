@@ -360,6 +360,7 @@ not move behind state that has already been written.
 | Version | What state at this version carries that an earlier manager cannot read |
 | --- | --- |
 | 1 | The durable contract of the first release: execution bindings, plan and applied records, approvals, the operation claim, `status.unresolvedRun` on a `PtahMigration` (the record of an Apply whose outcome nobody established), and `status.activeOperation.retryNotBefore` (the delay a retried operation waits out). |
+| 2 | A database URL bound from a SecretProviderClass, first released in 0.2.20. `urlFromSecretProviderClass` stands in place of `urlFrom` in a claim's `status.activeOperation.target`, and on a `PtahSchema` in `status.activeOperation.observationDev` and in `status.pendingObservation.target` and `.dev`. A manager at 1 reads such a binding as a Secret with no name and dispatches nothing from it: its builder refuses a target bound that way, and the API server refuses a Job whose development database volume names no Secret. |
 
 A resource records its version where the run is bound to the components that
 executed it, and never clears it. A record a resource can only hold after it

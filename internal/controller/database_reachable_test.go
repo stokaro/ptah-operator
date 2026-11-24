@@ -24,6 +24,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // statusWrites keeps the conditions of every status patch the controller sent,
@@ -298,7 +299,7 @@ func TestASchemaOperationSetsDatabaseReachableToTheKind(t *testing.T) {
 			t.Run(path.name+"/"+string(kind), func(t *testing.T) {
 				t.Parallel()
 				schema, actual, writes := harvestSchemaFailure(t, path, &runner.ResultError{Code: string(kind), Message: frameText}, nil)
-				sentence := targetfailure.Message(kind, schema.Spec.Target.URLFrom)
+				sentence := targetfailure.Message(kind, urlsource.Source{Secret: schema.Spec.Target.URLFrom})
 				reason := databaseReachableReasons[kind]
 				assertDatabaseUnreached(t, actual.Status.Conditions, reason, sentence)
 				writes.assertSameWrite(t, operatorv1alpha1.ConditionReconciliationFailed, sentence, reason)
@@ -356,7 +357,7 @@ func TestMovingBetweenKindsKeepsTheTransitionTime(t *testing.T) {
 	schema, actual, _ := harvestSchemaFailure(t, path,
 		&runner.ResultError{Code: string(dataplane.TargetAuthenticationFailed), Message: frameText}, previous)
 	assertDatabaseUnreached(t, actual.Status.Conditions, operatorv1alpha1.ReasonAuthenticationFailed,
-		targetfailure.Message(dataplane.TargetAuthenticationFailed, schema.Spec.Target.URLFrom))
+		targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.Source{Secret: schema.Spec.Target.URLFrom}))
 	reachable := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable)
 	if !reachable.LastTransitionTime.Time.Equal(previous.LastTransitionTime.Time) {
 		t.Fatalf("lastTransitionTime moved to %v, want %v kept", reachable.LastTransitionTime, previous.LastTransitionTime)
@@ -369,7 +370,7 @@ func unreachableSchema(schema *operatorv1alpha1.PtahSchema) {
 	meta.SetStatusCondition(&schema.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionDatabaseReachable, Status: metav1.ConditionFalse,
 		Reason:  string(operatorv1alpha1.ReasonAuthenticationFailed),
-		Message: targetfailure.Message(dataplane.TargetAuthenticationFailed, schema.Spec.Target.URLFrom),
+		Message: targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.Source{Secret: schema.Spec.Target.URLFrom}),
 	})
 }
 
@@ -555,7 +556,7 @@ func TestAMigrationHistorySetsDatabaseReachableToTheKind(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			actual := readMigration(t, api, migration)
-			sentence := targetfailure.Message(kind, migration.Spec.Target.URLFrom)
+			sentence := targetfailure.Message(kind, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 			reason := databaseReachableReasons[kind]
 			assertDatabaseUnreached(t, actual.Status.Conditions, reason, sentence)
 			writes.assertSameWrite(t, operatorv1alpha1.ConditionMigrationProgressing, sentence, reason)
@@ -614,7 +615,7 @@ func TestAMigrationApplySetsDatabaseReachableToTheKind(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			actual := readMigration(t, api, migration)
-			sentence := targetfailure.Message(kind, migration.Spec.Target.URLFrom)
+			sentence := targetfailure.Message(kind, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 			reason := databaseReachableReasons[kind]
 			assertDatabaseUnreached(t, actual.Status.Conditions, reason, sentence)
 			writes.assertSameWrite(t, operatorv1alpha1.ConditionMigrationReady, sentence, reason)
@@ -677,7 +678,7 @@ func TestAMigrationApplyWithAKindAndNoRunSetsDatabaseReachable(t *testing.T) {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 	actual := readMigration(t, api, migration)
-	sentence := targetfailure.Message(dataplane.TargetTLSFailed, migration.Spec.Target.URLFrom)
+	sentence := targetfailure.Message(dataplane.TargetTLSFailed, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 	if run := actual.Status.LastRun; run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown || run.Message != sentence {
 		t.Fatalf("LastRun = %#v, want an unknown run that says %q", run, sentence)
 	}
