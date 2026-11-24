@@ -14,6 +14,10 @@ team already reviews migrations in the repository that produces them.
 
 The two resources are independent. One database can have both, and they
 serialize against each other through the same lock.
+[The lifecycle explorer's composed workflow](../../reference/reconciliation/?lx-view=workflow#lifecycle-explorer)
+follows both through one change -- expand the schema, backfill with a
+migration, contract -- with what sharing the database takes, what each
+approval covers, and the gates no resource holds.
 
 ## What the operator does, in order
 

@@ -597,6 +597,12 @@ re-examined on a bounded cadence: the shorter of the resource's `spec.interval`
 and one minute. Every claimant leaves `Blocked` within a minute of the last one
 declaring, whatever interval it runs on.
 
+The Lease orders the claimants' operations and nothing else: it does not make
+a migration wait for a schema change, or the other way round.
+[The lifecycle explorer's composed workflow](../../reference/reconciliation/?lx-view=workflow#lifecycle-explorer)
+walks a schema and a migration through one change to a shared database, with
+the order and the checks a pipeline around them has to hold.
+
 ### A database more than one namespace manages
 
 A coordination key belongs to its namespace. The realm it names is the engine,
