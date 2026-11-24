@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-24T00:19:51.759172+00:00",
+  "frozenAt": "2026-11-24T04:23:18.300562+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "bcee79162d2883ed75117ced78938445c182ad4e7e1802067a7e5b3d6add8722"
+      "sha256": "be2df12e5b182d927ce21f40b378597482946864e50bcedad0a9acc8f018025b"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "9f3c54b91925db090b4670dfb6d55d31ec9fe22b2c05afea1dea89905795b2a4"
+      "sha256": "b6054c2046dcdfcf6d52e562ee3d2ff30099009a61eae5c089e4071b4ab8cc23"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 140,
+  "revision": 141,
   "supersedes": {
-    "freezeCommit": "caf5065f36cbaaa107a39a2ff6d9c17ce10f80e7",
-    "sha256": "6c63a5ad51b8cc4a6ece68b0ea9b74eea4b8897f37e1be495cd22c881e1e8c52"
+    "freezeCommit": "d7469f2331fe408881f896e609845c2296704de0",
+    "sha256": "0dc9351b5ebe2bd71542758d5d16d48ef1fd91be95444ef6ef9fdb296c3b89b1"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.35.0 to the v0.35.1 release image, and record in the edge row that the drift check measured again at v0.35.1 still replays each applied migration under its file's own transaction directive rather than under --tx-mode. v0.35.1 refuses a MySQL table revoke that a database-wide grant keeps, with the code declaration-refused, which a Plan reports as plan_refused and stops Blocked with PlanRefused, and plans a MySQL GRANT ALL once rather than on every plan. Every reading, every saved plan, the schema SQL contract's statements and the capacity bands are unchanged; the contract, the capture record and the calibration name the new commit. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "MySQL 9.7.x is labeled LTS"
 }

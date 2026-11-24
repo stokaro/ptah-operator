@@ -33,9 +33,10 @@ still be recorded `Unknown` in the cases [0.2.16](#0216) names.
   the Added database lines workflow passed the whole lifecycle on it on every
   supported Kubernetes minor at Ptah v0.35.0. A cluster on 16.x, 17.x or 18.x
   has nothing to change for that.
-- **MySQL 9.7.x joins the supported release lines.** Run 45223146080 of the same
-  workflow passed the whole lifecycle on it on every supported Kubernetes minor
-  at Ptah v0.35.0. A cluster on MySQL 8.4.x has nothing to change.
+- **MySQL 9.7.x LTS joins the supported release lines.** Run 45223146080 of
+  the same workflow passed the whole lifecycle on it on every supported
+  Kubernetes minor at Ptah v0.35.0. A cluster on MySQL 8.4.x has nothing to
+  change.
 - **A Plan that Ptah fails without a refusal code logs Ptah's sentence.** The
   Plan Pod's log has one line, `ptah-runner: ptah reported:`, with the first
   line of what Ptah said, as a failed Apply already logged. The runner removes
