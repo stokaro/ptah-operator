@@ -6058,6 +6058,12 @@ func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
 		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
 		exactSourceLine("the MySQL source image pulled", `mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql`),
+		// An innovation image declares MYSQL_MAJOR=innovation, so the line is read
+		// from the release the image installs.
+		exactSourceLine("the release the MySQL image installs read",
+			`mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')`),
+		exactSourceLine("the MySQL line read from that release",
+			`mysql_image_declared=$(mysql_version_line "$mysql_image_version")`),
 		exactSourceLine("the MySQL line held to the image", `[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`),
 		exactSourceLine("an added MySQL line's date read", `if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the MySQL date held to the image", `image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`),

@@ -32,8 +32,10 @@ whether the table exists.
   `sql_mode` read ([stokaro/ptah#6454](https://github.com/stokaro/ptah/pull/6454)), and changes
   no other. On 2026-11-23 the same probe with the v0.35.0 image on MySQL 9.7.4
   (`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`)
+  and on MySQL 26.10.0
+  (`mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999`)
   reproduced this reading record for record, and on 2026-11-24 so did the v0.35.1 release
-  image (`ff4a4368`) on MySQL 8.4.11
+  image (`ff4a4368`) on MySQL 8.4.11 and on MySQL 26.10.0
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

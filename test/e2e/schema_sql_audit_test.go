@@ -399,8 +399,8 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			// same audit. PostgreSQL 18 reads a column's NOT NULL constraint
 			// name where 17 selects an empty string, so that one declaration
 			// has a witness only on 18. PostgreSQL 16 and 15 send what 17 sends
-			// and spell the parameter detail differently. MySQL 9.7 sends what
-			// 8.4 sends.
+			// and spell the parameter detail differently. MySQL 9.7 and 26.10
+			// send what 8.4 sends.
 			counts := map[string]map[string]int{
 				"postgresql": {"observe": 67, "plan": 118, "stale-apply": 59},
 				"mysql":      {"observe": 26, "plan": 49, "stale-apply": 30},
