@@ -11,7 +11,9 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcearchive"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcecontent"
 )
 
 // A Git source reaches an operation through one container that holds its
@@ -192,10 +194,48 @@ func (b Builder) gitFetch(
 	if err := sourcebinding.ValidateGit(binding); err != nil {
 		return corev1.Container{}, nil, err
 	}
-	return b.remoteFetch(gitFetchContainerName, "--fetch-git-source", destination, resources,
+	return b.remoteFetch(gitFetchContainerName, "--fetch-git-source", destination, resources, gitFetchVolumes,
 		func(environment []corev1.EnvVar, volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
 			return addGitAccess(gitFetchRequest(binding, schema), environment, volumes, mounts)
 		})
+}
+
+// fetchVolumeSizes is how much a fetch container's two memory-backed
+// volumes hold: the source volume it writes the files to, and its own work
+// directory.
+type fetchVolumeSizes struct {
+	source, work int64
+}
+
+// gitFetchVolumes are the volumes of a Git fetch, whose pull Ptah runs. They
+// are not derived from the pull's bounds as an HTTPS or an S3 fetch's are:
+// what a clone leaves in the work directory is not bounded by one number the
+// way a download is.
+var gitFetchVolumes = fetchVolumeSizes{source: sourceVolumeBytes, work: fetchWorkVolumeBytes}
+
+// largestPageBytes is the largest memory page a Linux node runs with: 4 KiB
+// on most, 64 KiB on some arm64 and ppc64le kernels. A memory-backed volume
+// is a tmpfs, and a file on it takes whole pages.
+const largestPageBytes = 64 << 10
+
+// selectedFilesBytes is what the selected files take on a memory-backed
+// volume at most: the 64 MiB the runner and Ptah admit, in at most
+// sourcecontent.MaxFiles files, each rounded up to a page.
+const selectedFilesBytes = sourcearchive.MaxSelectedBytes + sourcecontent.MaxFiles*largestPageBytes
+
+// ptahHTTPSDownloadBytes is what Ptah's HTTPS pull downloads at most: its
+// internal/httpsource.MaxDownloadBytes in the pinned release. The pull
+// writes one byte past it to learn that a download is larger.
+const ptahHTTPSDownloadBytes = 64 << 20
+
+// httpsFetchVolumes are sized from what Ptah's HTTPS pull and the runner
+// admit, so an HTTPS fetch is refused by a bound and never runs out of space.
+// The work directory holds the runner's copy of the CA beside, first, the
+// download and, once the pull has removed it, the selected files the pull
+// writes for the runner to read; the source volume holds those files again.
+var httpsFetchVolumes = fetchVolumeSizes{
+	source: selectedFilesBytes,
+	work:   runner.MaxTrustFileBytes + largestPageBytes + max(ptahHTTPSDownloadBytes+largestPageBytes, selectedFilesBytes),
 }
 
 // remoteFetch builds the init container a Git, an HTTPS or an S3 fetch runs
@@ -205,6 +245,7 @@ func (b Builder) gitFetch(
 func (b Builder) remoteFetch(
 	name, flag, destination string,
 	resources corev1.ResourceRequirements,
+	sizes fetchVolumeSizes,
 	add func([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error),
 ) (corev1.Container, []corev1.Volume, error) {
 	environment := []corev1.EnvVar{
@@ -213,8 +254,8 @@ func (b Builder) remoteFetch(
 		runnerProtocolEnv(),
 	}
 	volumes := []corev1.Volume{
-		{Name: sourceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(sourceVolumeBytes)}},
-		{Name: fetchWorkVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(fetchWorkVolumeBytes)}},
+		{Name: sourceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(sizes.source)}},
+		{Name: fetchWorkVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(sizes.work)}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true},

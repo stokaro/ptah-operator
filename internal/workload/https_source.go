@@ -134,7 +134,7 @@ func (b Builder) httpsFetch(
 	if err := sourcebinding.ValidateHTTPS(binding); err != nil {
 		return corev1.Container{}, nil, err
 	}
-	return b.remoteFetch(httpsFetchContainerName, "--fetch-https-source", destination, resources,
+	return b.remoteFetch(httpsFetchContainerName, "--fetch-https-source", destination, resources, httpsFetchVolumes,
 		func(environment []corev1.EnvVar, volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
 			return addHTTPSAccess(httpsFetchRequest(binding, schema), environment, volumes, mounts)
 		})

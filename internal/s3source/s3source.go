@@ -400,9 +400,9 @@ func fetchToFile(ctx context.Context, client *http.Client, o Options) (download,
 	hash := sha256.New()
 	// The request asked for identity, so the transport decodes nothing: an
 	// object stored with Content-Encoding gzip is hashed as stored.
-	written, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(response.Body, MaxDownloadBytes+1))
+	written, larger, err := copyBounded(io.MultiWriter(file, hash), response.Body, MaxDownloadBytes)
 	switch {
-	case written > MaxDownloadBytes:
+	case larger:
 		err = fmt.Errorf("%w: %s gave more than %d bytes", ErrTooLarge, o.Object, MaxDownloadBytes)
 	case errors.Is(err, io.ErrUnexpectedEOF), err == nil && response.ContentLength >= 0 && written != response.ContentLength:
 		err = fmt.Errorf("%w: %s declared %d bytes and gave %d", ErrTruncated, o.Object, response.ContentLength, written)
@@ -417,6 +417,28 @@ func fetchToFile(ctx context.Context, client *http.Client, o Options) (download,
 		return download{}, err
 	}
 	return download{file: file, size: written, digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), version: served}, nil
+}
+
+// copyBounded copies at most limit bytes of src to dst, and reports whether
+// src held more. It never writes more than limit bytes: the byte that shows
+// src is larger is read and dropped. A fetch step writes the object to a
+// memory-backed volume sized from MaxDownloadBytes, so an object larger than
+// the bound is refused as too large rather than failing for lack of space.
+func copyBounded(dst io.Writer, src io.Reader, limit int64) (int64, bool, error) {
+	written, err := io.Copy(dst, io.LimitReader(src, limit))
+	if err != nil || written < limit {
+		return written, false, err
+	}
+	var next [1]byte
+	read, err := io.ReadFull(src, next[:])
+	switch {
+	case read > 0:
+		return written, true, nil
+	case errors.Is(err, io.EOF):
+		return written, false, nil
+	default:
+		return written, false, err
+	}
 }
 
 func shownVersion(version string) string {

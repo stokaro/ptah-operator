@@ -102,14 +102,14 @@
             "name": "schema-source",
             "emptyDir": {
               "medium": "Memory",
-              "sizeLimit": "64Mi"
+              "sizeLimit": "129536Ki"
             }
           },
           {
             "name": "fetch-work",
             "emptyDir": {
               "medium": "Memory",
-              "sizeLimit": "64Mi"
+              "sizeLimit": "66688Ki"
             }
           },
           {

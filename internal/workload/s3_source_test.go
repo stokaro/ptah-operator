@@ -11,7 +11,10 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/s3source"
+	"github.com/stokaro/ptah-operator/internal/sourcearchive"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcecontent"
 )
 
 // s3FileSpec is a schema file in a private bucket behind a CA.
@@ -336,6 +339,122 @@ func TestBuildFetchesAnS3SourceBeforeTheOperation(t *testing.T) {
 			t.Fatalf("a fetch of an unversioned object carries %s", runner.EnvS3VersionID)
 		}
 	})
+}
+
+// s3FetchRoom is what an S3 fetch's volumes have to hold for the runner's
+// bounds to refuse an object before the volume runs out of space, on a node
+// whose pages are as large as Linux makes them: the CA copy and the object
+// in the work directory, the selected files in the source volume, every file
+// rounded up to a page.
+func s3FetchRoom() (work, source int64) {
+	const page = 64 << 10
+	return s3source.MaxDownloadBytes + runner.MaxTrustFileBytes + 2*page,
+		sourcearchive.MaxSelectedBytes + sourcecontent.MaxFiles*page
+}
+
+// holdsAtLeast reports whether volume is a memory-backed emptyDir that holds
+// at least need bytes.
+func holdsAtLeast(volume corev1.Volume, need int64) bool {
+	dir := volume.EmptyDir
+	return dir != nil && dir.Medium == corev1.StorageMediumMemory && dir.SizeLimit != nil && dir.SizeLimit.Value() >= need
+}
+
+// TestAnS3FetchHasRoomForWhatTheRunnerAdmits holds the fetch's volumes to the
+// runner's bounds. With 64 MiB volumes, an object of exactly the 64 MiB the
+// Resolve admitted failed the fetch for lack of space beside the CA copy, and
+// so could a selection of 64 MiB in many small files.
+func TestAnS3FetchHasRoomForWhatTheRunnerAdmits(t *testing.T) {
+	t.Parallel()
+	work, source := s3FetchRoom()
+	// The check refuses the 64 MiB the volumes had.
+	tooSmall := corev1.Volume{VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(64 << 20)}}
+	if holdsAtLeast(tooSmall, work) || holdsAtLeast(tooSmall, source) {
+		t.Fatalf("a 64 MiB volume passes the room check for %d and %d bytes", work, source)
+	}
+	spec := s3FileSpec()
+	claim := operationFixture(operatorv1alpha1.OperationObserve)
+	claim.Source = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(spec)}
+	schemaJob, err := builderFixture().Build(s3SchemaFixture(spec), claim, nil)
+	if err != nil {
+		t.Fatalf("Build() = %v", err)
+	}
+	archive := s3ArchiveSpec()
+	migration := migrationFixture()
+	migration.Spec.Artifact = operatorv1alpha1.SourceSpec{S3: archive}
+	migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(archive)}
+	history := migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory)
+	history.Source = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(archive)}
+	migrationJob, err := builderFixture().BuildMigration(migration, history, nil)
+	if err != nil {
+		t.Fatalf("BuildMigration() = %v", err)
+	}
+	assertFetchRoom(t, map[string]*batchv1.Job{"schema observe": schemaJob, "migration history": migrationJob}, work, source)
+}
+
+// assertFetchRoom holds the two volumes of each Job's fetch to the room
+// given, and fails a Job in which it did not find both.
+func assertFetchRoom(t *testing.T, jobs map[string]*batchv1.Job, work, source int64) {
+	t.Helper()
+	for name, job := range jobs {
+		checked := 0
+		for _, volume := range job.Spec.Template.Spec.Volumes {
+			switch volume.Name {
+			case fetchWorkVolumeName:
+				checked++
+				if !holdsAtLeast(volume, work) {
+					t.Errorf("%s: the %s volume is %+v, want a memory-backed one of at least %d bytes", name, volume.Name, volume.EmptyDir, work)
+				}
+			case sourceVolumeName:
+				checked++
+				if !holdsAtLeast(volume, source) {
+					t.Errorf("%s: the %s volume is %+v, want a memory-backed one of at least %d bytes", name, volume.Name, volume.EmptyDir, source)
+				}
+			}
+		}
+		if checked != 2 {
+			t.Errorf("%s: found %d of the fetch's two volumes", name, checked)
+		}
+	}
+}
+
+// TestAnHTTPSFetchHasRoomForWhatThePullAdmits holds an HTTPS fetch's volumes
+// to the bounds of Ptah's pull. The pull writes the download, up to one byte
+// past its 64 MiB bound, into the work directory beside the runner's copy of
+// the CA, removes it, and writes the selected files there, which the runner
+// copies to the source volume. With 64 MiB volumes a download of exactly the
+// bound failed for lack of space, and so could a selection of 64 MiB in many
+// small files.
+func TestAnHTTPSFetchHasRoomForWhatThePullAdmits(t *testing.T) {
+	t.Parallel()
+	const (
+		page = 64 << 10
+		// Ptah's internal/httpsource.MaxDownloadBytes.
+		download = 64 << 20
+	)
+	selected := int64(sourcearchive.MaxSelectedBytes + sourcecontent.MaxFiles*page)
+	work := runner.MaxTrustFileBytes + page + max(download+page, selected)
+	tooSmall := corev1.Volume{VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(64 << 20)}}
+	if holdsAtLeast(tooSmall, work) || holdsAtLeast(tooSmall, selected) {
+		t.Fatalf("a 64 MiB volume passes the room check for %d and %d bytes", work, selected)
+	}
+	spec := httpsFileSpec()
+	claim := operationFixture(operatorv1alpha1.OperationObserve)
+	claim.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+	schemaJob, err := builderFixture().Build(httpsSchemaFixture(spec), claim, nil)
+	if err != nil {
+		t.Fatalf("Build() = %v", err)
+	}
+	archive := httpsArchiveSpec()
+	migration := migrationFixture()
+	migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: archive}
+	migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(archive)}
+	history := migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory)
+	history.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(archive)}
+	migrationJob, err := builderFixture().BuildMigration(migration, history, nil)
+	if err != nil {
+		t.Fatalf("BuildMigration() = %v", err)
+	}
+	assertFetchRoom(t, map[string]*batchv1.Job{"schema observe": schemaJob, "migration history": migrationJob}, work, selected)
 }
 
 // s3PlanFixture is planFixture for a schema whose source is S3: contract

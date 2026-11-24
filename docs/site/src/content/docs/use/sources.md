@@ -491,9 +491,12 @@ object with one path-style GetObject request,
 `https://<endpoint>/<bucket>/<key>`, asks for the bytes as stored, and refuses
 bytes that do not give the digest before it reads any of them as a file or an
 archive. Take the digest of the file you uploaded: neither the object's ETag
-nor a checksum the bucket stores is this number. `format` and `path` select
-the files exactly as they do for an HTTPS download, and so does a migration
-sequence:
+nor a checksum the bucket stores is this number. An object is at most
+64 MiB, and the files it selects at most 1,000 and 64 MiB. A larger object is
+refused as `s3_source_refused` at the Resolve and at every later fetch: the
+fetch's volumes are sized so that the bound refuses it, never the space left.
+`format` and `path` select the files exactly as they do for an HTTPS download,
+and so does a migration sequence:
 
 ```yaml
 spec:

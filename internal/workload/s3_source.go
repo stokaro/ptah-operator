@@ -9,6 +9,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/s3source"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
@@ -27,6 +28,16 @@ const (
 	s3CADirectory          = "/credentials/s3-ca"
 	s3CAPath               = s3CADirectory + "/ca.pem"
 )
+
+// s3FetchVolumes are sized from what the runner admits, so an S3 fetch is
+// refused by a bound and never runs out of space: the work directory holds
+// the copy of the CA and the object, which the runner never writes past
+// s3source.MaxDownloadBytes, each rounded up to a page; the source volume
+// holds the selected files, which the runner writes there directly.
+var s3FetchVolumes = fetchVolumeSizes{
+	source: selectedFilesBytes,
+	work:   s3source.MaxDownloadBytes + runner.MaxTrustFileBytes + 2*largestPageBytes,
+}
 
 // s3Request is what one S3 access is told: the object, its digest, its
 // format and the selected path; for a fetch, the version and the content
@@ -146,7 +157,7 @@ func (b Builder) s3Fetch(
 	if err := sourcebinding.ValidateS3(binding); err != nil {
 		return corev1.Container{}, nil, err
 	}
-	return b.remoteFetch(s3FetchContainerName, "--fetch-s3-source", destination, resources,
+	return b.remoteFetch(s3FetchContainerName, "--fetch-s3-source", destination, resources, s3FetchVolumes,
 		func(environment []corev1.EnvVar, volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
 			return addS3Access(s3FetchRequest(binding, schema), environment, volumes, mounts)
 		})

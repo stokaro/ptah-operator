@@ -35,6 +35,12 @@ waiting for an approval and the approval given for it carry over.
   later operation. A source policy bounds it with `allowedS3Buckets`. No AWS
   credential chain or workload identity is read, and no redirect is followed.
   [From S3](../../use/sources/#from-s3) has the fields.
+- **An HTTPS fetch has room for what Ptah's pull admits.** Its work volume held
+  64 MiB, which is also Ptah's download bound, so a download of that size
+  under `transport.caFrom` failed for lack of space beside the runner's copy of
+  the CA, a larger one served without a length failed the same way rather than
+  as too large, and so could 64 MiB selected in many small files. The
+  `fetch-https-source` step's volumes are now sized from those bounds.
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
   supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x
