@@ -39,9 +39,15 @@ step does not prove; **Implementation**, the default, adds what Kubernetes, the
 operator and the executor do underneath and where each object lives. The
 depth stays chosen from view to view and is kept in the address, and the text
 version follows it without JavaScript. A related object is a link, so a stage,
-a source or an object can be shared or opened in a page of its own. The sections after it are the precise reference the
-journey is taken from, and [Audit a database change](../../use/audit/) is the
-one for the audit view.
+a source or an object can be shared or opened in a page of its own. Each move
+is an entry in the browser's history: Back returns to the stage, the object and
+the depth you came from, and a reload keeps them. Point at an object, or move
+the focus to it, for a one-line hint of what it is, or of how it relates to
+the object selected; the panel a click or a tap opens says the rest. The
+glossary under the explorer defines the words it uses, UID, generation,
+fingerprint, claim, realm, proof and `Unknown` among them. The sections after
+it are the precise reference the journey is taken from, and
+[Audit a database change](../../use/audit/) is the one for the audit view.
 
 <div data-lifecycle-explorer></div>
 
