@@ -77,7 +77,7 @@ func sourcePolicyMoved(
 	recorded *operatorv1alpha1.SourcePolicyBinding,
 	resolved bool,
 ) (bool, error) {
-	if !resolved || (spec.ConfigMap == nil && spec.Git == nil && spec.HTTPS == nil) {
+	if !resolved || (spec.ConfigMap == nil && spec.Git == nil && spec.HTTPS == nil && spec.S3 == nil) {
 		return false, nil
 	}
 	_, live, err := sourcePolicyFor(ctx, reader, namespace, spec)

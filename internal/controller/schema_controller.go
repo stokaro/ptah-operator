@@ -1605,6 +1605,13 @@ func (r *SchemaReconciler) verifiedSourcePolicyError(
 		}
 		return nil
 	}
+	if schema.Status.Source.S3 != nil {
+		// Nor has an S3 source: its digest is in the spec.
+		if !sourcebinding.S3Resolved(schema.Spec.Desired.S3, schema.Status.Source.S3) {
+			return fmt.Errorf("the source is no longer the S3 object it was resolved from")
+		}
+		return nil
+	}
 	if !schema.Status.Source.Verified || schema.Status.Source.VerificationPolicyUID == "" ||
 		schema.Status.Source.VerificationPolicyDigest == "" {
 		return fmt.Errorf("verified source lacks an immutable verification policy binding")
@@ -2071,6 +2078,41 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 			setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDownloadVerified,
 				httpsResolvedMessage(revision))
+			meta.RemoveStatusCondition(&schema.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+			break
+		}
+		if object := schema.Spec.Desired.S3; object != nil {
+			revision, err := s3Resolution(object, result)
+			if err != nil {
+				return r.retryOperation(ctx, schema, nil, err)
+			}
+			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
+			if err == nil {
+				err = checkS3Source(policy, object, result.ResolvedContentBytes)
+			}
+			if err != nil {
+				if errors.Is(err, errSourceRefused) {
+					return r.retryOperationAs(ctx, schema, nil, operatorv1alpha1.ReasonConfigurationError, err, nil)
+				}
+				return ctrl.Result{}, err
+			}
+			if s3ResolutionChanged(schema.Status.Source.S3, revision) ||
+				!sourcebinding.SamePolicy(schema.Status.Source.SourcePolicy, policyBinding) {
+				if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
+					return ctrl.Result{}, err
+				}
+				schema.Status.Plan = nil
+				schema.Status.Applied = nil
+			}
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{S3: &revision, ResolvedAt: &now, SourcePolicy: policyBinding}
+			// The pinned digest is the whole trust decision for an S3
+			// source, as for an HTTPS one, and the Resolve Job already held
+			// the object to it, so there is no Verify step: observation
+			// reads the files next.
+			schema.Status.Phase = operatorv1alpha1.PhaseObserving
+			schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
+			setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDownloadVerified,
+				s3ResolvedMessage(revision))
 			meta.RemoveStatusCondition(&schema.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
 			break
 		}
@@ -2799,15 +2841,19 @@ func (r *SchemaReconciler) claimAt(
 		// read and a write here rather than a Job.
 		return r.resolveConfigMapSource(ctx, schema)
 	}
-	if operation == operatorv1alpha1.OperationResolve && (schema.Spec.Desired.Git != nil || schema.Spec.Desired.HTTPS != nil) {
-		// A host the source policy does not allow gets no Job: the
-		// credential is never sent there.
+	if operation == operatorv1alpha1.OperationResolve &&
+		(schema.Spec.Desired.Git != nil || schema.Spec.Desired.HTTPS != nil || schema.Spec.Desired.S3 != nil) {
+		// A host or a bucket the source policy does not allow gets no Job:
+		// the credential is never sent there.
 		policy, _, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
 		if err == nil {
-			if git := schema.Spec.Desired.Git; git != nil {
-				err = checkGitSource(policy, git, 0)
-			} else {
+			switch {
+			case schema.Spec.Desired.Git != nil:
+				err = checkGitSource(policy, schema.Spec.Desired.Git, 0)
+			case schema.Spec.Desired.HTTPS != nil:
 				err = checkHTTPSSource(policy, schema.Spec.Desired.HTTPS, 0)
+			default:
+				err = checkS3Source(policy, schema.Spec.Desired.S3, 0)
 			}
 		}
 		if err != nil {
@@ -3361,7 +3407,7 @@ func pendingObservationFor(
 	}
 	if !sourcebinding.AccessGives(*operation.Source, schema.Status.Plan.ArtifactDigest, schema.Status.Plan.Source) ||
 		(operation.Source.Snapshot == nil && operation.Source.Git == nil && operation.Source.HTTPS == nil &&
-			!strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest)) {
+			operation.Source.S3 == nil && !strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest)) {
 		return nil, fmt.Errorf("cannot persist post-apply proof without immutable artifact access")
 	}
 	plan := *schema.Status.Plan
@@ -5223,6 +5269,10 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["https_source"] = download
 			break
 		}
+		if object := schema.Spec.Desired.S3; object != nil {
+			base["s3_source"] = object
+			break
+		}
 		base["requested_reference"] = schema.Spec.Desired.OCIRef
 		base["registry_auth"] = schema.Spec.Desired.RegistryAuthFrom
 		base["transport"] = schema.Spec.Desired.Transport
@@ -5737,14 +5787,17 @@ func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, sta
 	})
 }
 
-// refreshWording names what a refresh reads: the OCI reference, the Git ref
-// or the HTTPS download. An OCI source keeps the words it always had.
-func refreshWording(schema *operatorv1alpha1.PtahSchema, oci, git, https string) string {
+// refreshWording names what a refresh reads: the OCI reference, the Git ref,
+// the HTTPS download or the S3 object. An OCI source keeps the words it
+// always had.
+func refreshWording(schema *operatorv1alpha1.PtahSchema, oci, git, https, s3 string) string {
 	switch {
 	case schema.Spec.Desired.Git != nil:
 		return git
 	case schema.Spec.Desired.HTTPS != nil:
 		return https
+	case schema.Spec.Desired.S3 != nil:
+		return s3
 	default:
 		return oci
 	}
@@ -5756,7 +5809,8 @@ func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
 	}
 	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshing, refreshWording(schema, "Refreshing the requested OCI reference; the retained digest remains historical evidence",
 		"Refreshing the Git ref; the retained commit remains historical evidence",
-		"Downloading the HTTPS source again; the retained content digest remains historical evidence"))
+		"Downloading the HTTPS source again; the retained content digest remains historical evidence",
+		"Reading the S3 object again; the retained content digest remains historical evidence"))
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Plan currentness is unknown until source refresh and read-only reconciliation complete")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Convergence is unknown until source refresh and read-only reconciliation complete")
 }
@@ -5764,15 +5818,17 @@ func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
 func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
 	if !schemaSourceResolved(schema) {
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed, refreshWording(schema, "The requested OCI reference could not be resolved", "The Git ref could not be resolved",
-			"The HTTPS download could not be read"))
+			"The HTTPS download could not be read", "The S3 object could not be read"))
 		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSourceUnresolved, refreshWording(schema, "No plan can be prepared until the requested OCI reference resolves",
-			"No plan can be prepared until the Git ref resolves", "No plan can be prepared until the HTTPS download is read"))
+			"No plan can be prepared until the Git ref resolves", "No plan can be prepared until the HTTPS download is read",
+			"No plan can be prepared until the S3 object is read"))
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceResolutionUnknown, "Convergence cannot be determined without a resolved source")
 		return
 	}
 	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed, refreshWording(schema, "The requested OCI reference could not be refreshed; the retained digest remains historical evidence",
 		"The Git ref could not be resolved again; the retained commit remains historical evidence",
-		"The HTTPS download could not be read again; the retained content digest remains historical evidence"))
+		"The HTTPS download could not be read again; the retained content digest remains historical evidence",
+		"The S3 object could not be read again; the retained content digest remains historical evidence"))
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Plan currentness is unknown because source freshness could not be established")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Convergence is unknown because source freshness could not be established")
 }

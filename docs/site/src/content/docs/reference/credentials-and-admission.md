@@ -32,6 +32,8 @@ contract that keeps it true. The operational view is
 | Git fetch init, Git source | Git credential and its grants | no | the bound commit, checked against the bound content digest |
 | Resolve main, HTTPS source | HTTPS credential and its grants | no | the URL, held to the pinned download digest, and the optional CA |
 | HTTPS fetch init, HTTPS source | HTTPS credential and its grants | no | the bound download, held to its digest and to the bound content digest |
+| Resolve main, S3 source | S3 key pair and its grants | no | the object, held to the pinned object digest, and the optional CA |
+| S3 fetch init, S3 source | S3 key pair and its grants | no | the bound object version, held to its digest and to the bound content digest |
 
 The controller sees only Secret names and keys; the kubelet reads the Secrets
 for the Job's Pod. A migration reads a local directory rather than an
@@ -52,6 +54,7 @@ Secret volume, mounted in that container and no other:
 | Registry username, password and token, `Environment` mode | `/credentials/registry/username`, `password`, `token` | `PTAH_OPERATOR_OCI_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
 | Git username and password, `https://` | `/credentials/git/username`, `password` | `PTAH_OPERATOR_GIT_USERNAME_FILE`, `_PASSWORD_FILE` |
 | HTTPS username and password, or token | `/credentials/https/username`, `password`, `token` | `PTAH_OPERATOR_HTTPS_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
+| S3 access key ID, secret access key and session token | `/credentials/s3/access-key-id`, `secret-access-key`, `session-token` | `PTAH_OPERATOR_S3_ACCESS_KEY_ID_FILE`, `_SECRET_ACCESS_KEY_FILE`, `_SESSION_TOKEN_FILE` |
 
 The container's environment holds the path and never the credential. The runner
 reads each file before anything else uses the value, so the value it redacts from
@@ -61,8 +64,10 @@ takes the database URL from `--db-url` or `PTAH_DB_URL` and a registry, Git or
 HTTPS credential from its environment, and nothing else, and a command line is visible
 to every process in the Pod. The OCI fetch init container runs Ptah's pull through
 the runner for the same reason, and the runner refuses any command there but the
-`schema pull` or `migrations pull` the manager built. A Docker config file and an
-SSH key were files before and are unchanged.
+`schema pull` or `migrations pull` the manager built. An S3 key pair goes to no
+child: Ptah has no S3 pull, so the runner signs the request itself and starts no
+process while it holds the key. A Docker config file and an SSH key were files
+before and are unchanged.
 
 A value the kubelet puts into a container's environment stays in the container
 runtime's record of that container until the Pod is removed, for anyone with root
@@ -80,20 +85,22 @@ the `defaultUser` and `user` volume fields, which need the alpha
 `AtomicWriteVolumeUserFields` feature gate in every Kubernetes minor the operator
 supports and which the Job admission guard refuses.
 
-The registry, Git and HTTPS grants stay in the environment: the `registry`,
-`allowPlainHTTP`, `caSHA256`, `host` and `knownHostsSHA256` keys of a credential
-Secret reach the runner through a `secretKeyRef`. They say where a credential may
+The registry, Git, HTTPS and S3 grants stay in the environment: the `registry`,
+`allowPlainHTTP`, `caSHA256`, `host`, `bucket` and `knownHostsSHA256` keys of a
+credential Secret reach the runner through a `secretKeyRef`. They say where a credential may
 be sent and hold none, and a grant the Secret lacks stops the container with
-`CreateContainerConfigError`, as before. The one optional grant is the
-`caSHA256` of a registry credential over HTTPS, or of an `https://` Git or
-HTTPS credential, under a resource that selects no CA: it reaches the runner
+`CreateContainerConfigError`, as before. An S3 credential's `bucket` is
+optional, since a key pair the owner did not narrow to one bucket names none.
+The other optional grant is the `caSHA256` of a registry credential over HTTPS,
+or of an `https://` Git, HTTPS or S3 credential, under a resource that selects
+no CA: it reaches the runner
 only when the Secret holds it, and the runner then refuses the source rather
 than send the credential under the system roots. A registry credential over
 plain HTTP carries no `caSHA256` grant.
 
 A volume with a key the Secret may lack is optional, as the selector was: a
 registry credential's three keys, a Git credential's two, an HTTPS credential's
-three, and a `urlFrom` that sets `optional`. The kubelet then writes no file for that key, the runner leaves the
+three, an S3 credential's three, and a `urlFrom` that sets `optional`. The kubelet then writes no file for that key, the runner leaves the
 variable unset, and whatever needs it refuses as it did when the kubelet left an
 optional variable unset.
 
@@ -120,6 +127,15 @@ nowhere else. The runner in either one refuses a credential unless the
 Secret's `host` key names the URL's authority, a CA bundle unless the Secret
 holds its digest, and a credential that is incomplete or mixes a token with a
 user name or a password, before Ptah starts.
+
+A resource whose source is S3 has the same shape again, with the
+`fetch-s3-source` init container. The runner reads the object itself, and
+before it sends a request it refuses a key pair unless the Secret's `host` key
+names the endpoint's authority and, where the Secret holds `bucket`, that key
+names the source's bucket; a CA bundle unless the Secret holds its digest; a
+`caSHA256` with no CA selected; and half a key pair or a session token without
+one. It reads no other credential: no `AWS_*` variable, no shared credentials
+file, no instance metadata and no web identity token.
 
 For Resolve and Verify, the runner replaces a mounted custom CA ConfigMap
 projection with a private snapshot before starting Ptah. For Observe and Plan,
@@ -343,7 +359,7 @@ A Secret that exists without the key reads `MountVolume.SetUp failed for volume
 "database-url" : references non-existent secret key: url (volume database-url
 reads Secret <namespace>/application-database)`. The kubelet's words name the key
 and not the Secret, so the operator adds the volume and the Secret it reads, from
-the Pod. A missing registry, Git or HTTPS grant still stops the container that reads it,
+the Pod. A missing registry, Git, HTTPS or S3 grant still stops the container that reads it,
 and the message carries what the kubelet wrote on that container, such as
 `couldn't find key registry in Secret <namespace>/<name>`. Before 0.2.11 the
 database URL was a variable too, so the message was the container's

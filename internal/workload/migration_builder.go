@@ -143,7 +143,7 @@ func (b Builder) BuildMigration(
 		// the same artifact meets in its run what History met in its read.
 		//
 		// The run reads the directory the way it read it before Ptah v0.34.0,
-		// and the way it reads a Git, an HTTPS or a ConfigMap source: by
+		// and the way it reads a Git, an HTTPS, an S3 or a ConfigMap source: by
 		// format detection, with no --dir-format from the artifact's
 		// annotation. Detection reads a directory whole and refuses a file it
 		// leaves out, and a history recorded under its version keys keeps
@@ -208,6 +208,17 @@ func migrationDataPlane(
 			}
 			var err error
 			environment, volumes, mounts, err = addHTTPSAccess(httpsResolveRequest(*https, false), environment, volumes, mounts)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			break
+		}
+		if s3 := migration.Spec.Artifact.S3; s3 != nil {
+			if operation.Type == operatorv1alpha1.MigrationOperationVerify {
+				return nil, nil, nil, nil, errors.New("an S3 source has no verification policy and no Verify Job")
+			}
+			var err error
+			environment, volumes, mounts, err = addS3Access(s3ResolveRequest(*s3, false), environment, volumes, mounts)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -513,7 +524,8 @@ func validateMigration(migration *operatorv1alpha1.PtahMigration) error {
 	if !executionBindingIDPattern.MatchString(migration.Status.ExecutionBinding.Epoch) {
 		return errors.New("migration execution binding epoch is invalid")
 	}
-	if migration.Spec.Artifact.ConfigMap != nil || migration.Spec.Artifact.Git != nil || migration.Spec.Artifact.HTTPS != nil {
+	if migration.Spec.Artifact.ConfigMap != nil || migration.Spec.Artifact.Git != nil || migration.Spec.Artifact.HTTPS != nil ||
+		migration.Spec.Artifact.S3 != nil {
 		return nil
 	}
 	return validateRequestedReference(migration.Spec.Artifact.OCIRef)

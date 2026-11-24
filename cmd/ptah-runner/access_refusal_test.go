@@ -32,6 +32,14 @@ func TestRunLeavesTheAccessRefusalInTheTerminationMessage(t *testing.T) {
 		runner.EnvHTTPSPath + "=app/db/migrations", runner.EnvHTTPSSelects + "=directory",
 		runner.EnvExpectedContentDigest + "=" + digest,
 	}
+	s3Source := []string{
+		runnerProtocol, "PATH=" + os.Getenv("PATH"),
+		runner.EnvS3Endpoint + "=https://objects.example.com", runner.EnvS3Region + "=us-east-1",
+		runner.EnvS3Bucket + "=orders-releases", runner.EnvS3Key + "=app/1.4.0/app.tar.gz",
+		runner.EnvS3Digest + "=sha256:" + strings.Repeat("d", 64), runner.EnvS3Format + "=TarGzip",
+		runner.EnvS3Path + "=app/db/migrations", runner.EnvS3Selects + "=directory",
+		runner.EnvExpectedContentDigest + "=" + digest,
+	}
 	for _, row := range []struct {
 		name        string
 		arguments   func(binary, destination string) []string
@@ -72,6 +80,15 @@ func TestRunLeavesTheAccessRefusalInTheTerminationMessage(t *testing.T) {
 			environment: append(append([]string(nil), httpsSource...), runner.EnvHTTPSToken+"=https-token-7f3a", runner.EnvHTTPSHostGrant+"=attacker.example"),
 			record:      runner.AccessRefusal{Code: runner.CodeInvalidHTTPSAccess, Message: "the HTTPS credential is not granted for the source's host"},
 		},
+		{
+			name:      "the S3 fetch refuses a key pair granted for another bucket",
+			arguments: s3FetchArguments,
+			environment: append(append([]string(nil), s3Source...), runner.EnvS3AccessKeyID+"=AKIA-s3-0b1e",
+				runner.EnvS3SecretAccessKey+"=s3-secret-c4fe", runner.EnvS3HostGrant+"=objects.example.com",
+				runner.EnvS3BucketGrant+"=orders-private"),
+			record: runner.AccessRefusal{Code: runner.CodeInvalidS3Access,
+				Message: `the S3 credential is granted for the bucket "orders-private", not the source's`},
+		},
 		// Ptah ran and refused the content: that is no refusal of the access,
 		// and its words stay in the log.
 		{
@@ -84,6 +101,13 @@ func TestRunLeavesTheAccessRefusalInTheTerminationMessage(t *testing.T) {
 			name:        "the HTTPS fetch is given no source",
 			arguments:   httpsFetchArguments,
 			environment: []string{runnerProtocol},
+		},
+		// The endpoint is not reached: the object's read fails, which is no
+		// refusal of the access either.
+		{
+			name:        "the S3 fetch cannot reach the endpoint",
+			arguments:   s3FetchArguments,
+			environment: append(append([]string(nil), s3Source...), runner.EnvS3Endpoint+"=https://127.0.0.1:1"),
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -118,7 +142,7 @@ func TestRunLeavesTheAccessRefusalInTheTerminationMessage(t *testing.T) {
 			if !strings.Contains(stderr.String(), row.record.Message) {
 				t.Fatalf("the log %q does not say %q", stderr.String(), row.record.Message)
 			}
-			for _, credential := range []string{"git-password-41aa", "https-token-7f3a"} {
+			for _, credential := range []string{"git-password-41aa", "https-token-7f3a", "s3-secret-c4fe"} {
 				if strings.Contains(string(message), credential) || strings.Contains(stderr.String(), credential) {
 					t.Fatalf("the refusal carries the credential %q", credential)
 				}
@@ -154,4 +178,8 @@ func gitFetchArguments(binary, destination string) []string {
 
 func httpsFetchArguments(binary, destination string) []string {
 	return []string{"--fetch-https-source", destination, "--ptah-binary", binary}
+}
+
+func s3FetchArguments(binary, destination string) []string {
+	return []string{"--fetch-s3-source", destination, "--ptah-binary", binary}
 }

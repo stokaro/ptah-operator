@@ -54,6 +54,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
 	fetchHTTPSSource := flags.String("fetch-https-source", "", "fetch the resolved download of an HTTPS source into this directory")
+	fetchS3Source := flags.String("fetch-s3-source", "", "fetch the resolved object version of an S3 source into this directory")
 	fetchOCISource := flags.Bool("fetch-oci-source", false, "run the Ptah pull after -- with the registry credential the Job names by file")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
@@ -75,8 +76,10 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		}
 		return 0
 	}
-	// The Git and the HTTPS fetch take the same shape: the directory to
-	// fetch into and the Ptah binary, nothing else.
+	// The Git, the HTTPS and the S3 fetch take the same shape: the directory
+	// to fetch into and the Ptah binary, nothing else. The S3 fetch reads the
+	// object itself and runs no Ptah, so it takes the binary and ignores it,
+	// and one fetch container shape serves every remote source.
 	remoteFetches := map[string]struct {
 		kind        string
 		destination *string
@@ -84,6 +87,10 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	}{
 		"fetch-git-source":   {"Git", fetchGitSource, runner.FetchGitSource},
 		"fetch-https-source": {"HTTPS", fetchHTTPSSource, runner.FetchHTTPSSource},
+		"fetch-s3-source": {"S3", fetchS3Source,
+			func(ctx context.Context, _ string, environment []string, destination, tempDir string, _ runner.Executor, _ io.Writer) error {
+				return runner.FetchS3Source(ctx, environment, destination, tempDir)
+			}},
 	}
 	fetchMode := ""
 	flags.Visit(func(current *flag.Flag) {

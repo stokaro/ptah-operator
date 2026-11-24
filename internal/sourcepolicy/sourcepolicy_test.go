@@ -91,6 +91,76 @@ func TestAPolicyComparesHostsAsASCII(t *testing.T) {
 	}
 }
 
+// An S3 entry names an endpoint and a bucket together: the host compares
+// as an HTTPS host does, the bucket exactly, and neither the HTTPS hosts nor
+// another bucket on the same endpoint allows it.
+func TestAPolicyNamesAnS3BucketByItsEndpoint(t *testing.T) {
+	t.Parallel()
+	policy, err := sourcepolicy.Parse([]byte(`allowedHTTPSHosts:
+  - objects.example.com
+allowedS3Buckets:
+  - objects.example.com:9000/app-releases
+  - s3.eu-west-1.amazonaws.com/app-schemas
+  - not-a-bucket-entry
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, check := range map[string]error{
+		"an allowed bucket":              policy.CheckS3Bucket("objects.example.com:9000", "app-releases"),
+		"an allowed bucket by host case": policy.CheckS3Bucket("OBJECTS.example.com:9000", "app-releases"),
+		"an allowed bucket on AWS":       policy.CheckS3Bucket("s3.eu-west-1.amazonaws.com", "app-schemas"),
+	} {
+		if check != nil {
+			t.Errorf("%s was refused: %v", name, check)
+		}
+	}
+	for name, check := range map[string]error{
+		"another bucket on the endpoint":      policy.CheckS3Bucket("objects.example.com:9000", "app-private"),
+		"the bucket on another port":          policy.CheckS3Bucket("objects.example.com", "app-releases"),
+		"the bucket on another endpoint":      policy.CheckS3Bucket("attacker.example:9000", "app-releases"),
+		"a bucket on an allowed HTTPS host":   policy.CheckS3Bucket("objects.example.com", "anything"),
+		"the bucket under another endpoint's": policy.CheckS3Bucket("objects.example.com:9000", "app-schemas"),
+		"an entry without a bucket":           policy.CheckS3Bucket("not-a-bucket-entry", ""),
+		"a bucket that is a prefix":           policy.CheckS3Bucket("objects.example.com:9000", "app-release"),
+		"a host with U+0130":                  policy.CheckS3Bucket("objİcts.example.com:9000", "app-releases"),
+	} {
+		if !errors.Is(check, sourcepolicy.ErrRefused) || !strings.Contains(fmt.Sprint(check), "allowedS3Buckets") {
+			t.Errorf("%s: %v, want a refusal by allowedS3Buckets", name, check)
+		}
+	}
+	if err := policy.CheckS3Bucket("objİcts.example.com:9000", "app-releases"); !strings.Contains(fmt.Sprint(err), "in its xn-- form") {
+		t.Errorf("a host that is not ASCII: %v, want a refusal that says to write the xn-- form", err)
+	}
+	// allowedS3Buckets says nothing about an HTTPS source.
+	if err := policy.CheckHTTPSHost("objects.example.com:9000"); !errors.Is(err, sourcepolicy.ErrRefused) {
+		t.Errorf("an HTTPS download from an S3 endpoint: %v, want it refused", err)
+	}
+	unrestricted, err := sourcepolicy.Parse([]byte("allowedHTTPSHosts: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unrestricted.CheckS3Bucket("objects.example.com", "app-releases"); err != nil {
+		t.Errorf("an absent allowedS3Buckets refused a bucket: %v", err)
+	}
+	closed, err := sourcepolicy.Parse([]byte("allowedS3Buckets: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.CheckS3Bucket("objects.example.com", "app-releases"); !errors.Is(err, sourcepolicy.ErrRefused) {
+		t.Errorf("an empty allowedS3Buckets: %v, want a refusal", err)
+	}
+	for name, text := range map[string]string{
+		"a padded bucket entry": "allowedS3Buckets:\n  - \"objects.example.com/app-releases \"\n",
+		"an empty bucket entry": "allowedS3Buckets:\n  - \"\"\n",
+		"a misspelled rule":     "allowedS3Bucket:\n  - objects.example.com/app-releases\n",
+	} {
+		if _, err := sourcepolicy.Parse([]byte(text)); err == nil {
+			t.Errorf("Parse accepted %s", name)
+		}
+	}
+}
+
 func TestAnAbsentRuleRefusesNothingAndAnEmptyListAllowsNothing(t *testing.T) {
 	t.Parallel()
 	unrestricted, err := sourcepolicy.Parse([]byte("maxContentBytes: 10\n"))

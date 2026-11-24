@@ -1,6 +1,7 @@
-// Package sourcehost compares the host a Git or HTTPS source names with a
-// host something else grants: the host key of a credential Secret, or an
-// entry of a source policy's allowedGitHosts or allowedHTTPSHosts.
+// Package sourcehost compares the host a Git, HTTPS or S3 source names with
+// a host something else grants: the host key of a credential Secret, or an
+// entry of a source policy's allowedGitHosts, allowedHTTPSHosts or
+// allowedS3Buckets.
 //
 // A host is compared as ASCII. url.Parse accepts UTF-8 in a host and decodes
 // a percent-escaped one, and Go's HTTP transport dials such a host by its

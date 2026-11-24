@@ -523,6 +523,48 @@ func goldenJobCases() []goldenJobCase {
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},
+		{
+			name:       "schema-resolve-s3-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				return builder.Build(s3SchemaFixture(s3FileSpec()), operationFixture(operatorv1alpha1.OperationResolve), nil)
+			},
+		},
+		{
+			name:       "schema-plan-s3-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := s3FileSpec()
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(spec)}
+				return builder.Build(s3SchemaFixture(spec), operation, nil)
+			},
+		},
+		{
+			name:       "migration-resolve-s3-archive",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{S3: s3ArchiveSpec()}
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			// A key pair on the system roots: the owner's CA pin, if the
+			// Secret holds one, still reaches the fetch.
+			name:       "migration-apply-s3-archive-keys",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := s3ArchiveSpec()
+				spec.AuthFrom = &operatorv1alpha1.S3AuthSource{Name: "releases-keys"}
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{S3: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{S3: s3BindingOf(spec)}
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
 	}
 }
 

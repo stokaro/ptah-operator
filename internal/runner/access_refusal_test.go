@@ -232,6 +232,16 @@ func TestARefusedAccessLeavesItsSentenceAndNoCredential(t *testing.T) {
 		}
 	}
 
+	s3Pair := []string{EnvS3AccessKeyID + "=" + refusalUsername, EnvS3SecretAccessKey + "=" + refusalPassword}
+	s3Granted := append([]string{EnvS3HostGrant + "=objects.example.com"}, s3Pair...)
+	s3 := func(extra ...string) func(t *testing.T) error {
+		return func(t *testing.T) error {
+			environment := s3FetchEnvironment("https://objects.example.com", "app/1.4.0/app.tar.gz", otherDigest, "TarGzip", "directory",
+				"app/db/migrations", otherDigest, extra...)
+			return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
+		}
+	}
+
 	with := func(base []string, extra ...string) []string { return append(append([]string(nil), base...), extra...) }
 	for _, row := range []struct {
 		name     string
@@ -319,6 +329,28 @@ func TestARefusedAccessLeavesItsSentenceAndNoCredential(t *testing.T) {
 			https(EnvHTTPSURL + "=https://" + refusalUsername + ":" + refusalPassword + "@files.example.com/app/1.4.0/app.tar.gz"), "the HTTPS source URL carries a credential"},
 		{"https/a URL with the credential in its query", CodeInvalidHTTPSAccess,
 			https(with(httpsGranted, EnvHTTPSURL+"=https://files.example.com/app/1.4.0/app.tar.gz?token="+refusalToken)...), "the HTTPS source URL has a query or a fragment"},
+
+		{"s3/a key pair without a grant", CodeInvalidS3Access, s3(s3Pair...), "the S3 credential is not granted for the source's endpoint"},
+		{"s3/a key pair granted for another endpoint", CodeInvalidS3Access, s3(with(s3Pair, EnvS3HostGrant+"=attacker.example")...),
+			"the S3 credential is not granted for the source's endpoint"},
+		{"s3/a key pair granted for another bucket", CodeInvalidS3Access, s3(with(s3Granted, EnvS3BucketGrant+"=orders-private")...),
+			`the S3 credential is granted for the bucket "orders-private", not the source's`},
+		{"s3/a grant that is not ASCII", CodeInvalidS3Access, s3(with(s3Pair, EnvS3HostGrant+"=objects.example.com\n")...),
+			`host grant is refused: the host "objects.example.com\n" is not printable ASCII`},
+		{"s3/an access key ID without its secret", CodeInvalidS3Access, s3(EnvS3HostGrant+"=objects.example.com", EnvS3AccessKeyID+"="+refusalUsername),
+			"the S3 credential holds an access key ID without a secret access key"},
+		{"s3/a secret without its access key ID", CodeInvalidS3Access, s3(EnvS3HostGrant+"=objects.example.com", EnvS3SecretAccessKey+"="+refusalPassword),
+			"the S3 credential holds a secret access key without an access key ID"},
+		{"s3/a session token without a key pair", CodeInvalidS3Access, s3(EnvS3HostGrant+"=objects.example.com", EnvS3SessionToken+"="+refusalToken),
+			"the S3 credential holds a session token without a key pair"},
+		{"s3/a grant without a key pair", CodeInvalidS3Access, s3(EnvS3HostGrant + "=objects.example.com"), "an S3 grant was supplied without a key pair"},
+		{"s3/a CA pin without the CA", CodeInvalidS3Access, s3(with(s3Granted, EnvS3CASHA256Grant+"="+gitTestDigest(ca))...),
+			"the credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom"},
+		{"s3/a CA the owner did not grant", CodeInvalidS3Access, s3(with(s3Granted, EnvS3CASourceFile+"="+caFile, EnvS3CASHA256Grant+"="+otherDigest)...),
+			"the S3 certificate authority is not the one the credential's owner granted"},
+		{"s3/a CA that cannot be read", CodeInvalidS3Access, s3(with(s3Granted, EnvS3CASourceFile+"="+missing)...),
+			"read the S3 certificate authority"},
+		{"s3/a key that climbs", CodeInvalidS3Access, s3(with(s3Granted, EnvS3Key+"=app/../app.tar.gz")...), `".." element`},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -399,6 +431,18 @@ func TestTheGuardAndTheFetchSayWhatAResolveSays(t *testing.T) {
 				return FetchHTTPSSource(t.Context(), "ptah", environment, filepath.Join(t.TempDir(), "source"), t.TempDir(), &scriptedExecutor{t: t}, nil)
 			},
 		},
+		{
+			name: "an S3 key pair granted for another bucket",
+			resolve: []string{EnvS3AccessKeyID + "=" + refusalUsername, EnvS3SecretAccessKey + "=" + refusalPassword,
+				EnvS3HostGrant + "=objects.example.com", EnvS3BucketGrant + "=orders-private"},
+			step: func(t *testing.T) error {
+				environment := s3FetchEnvironment("https://objects.example.com", "app.tar.gz", "sha256:"+strings.Repeat("d", 64), "TarGzip",
+					"directory", "app/db/migrations", "sha256:"+strings.Repeat("c", 64),
+					EnvS3AccessKeyID+"="+refusalUsername, EnvS3SecretAccessKey+"="+refusalPassword,
+					EnvS3HostGrant+"=objects.example.com", EnvS3BucketGrant+"=orders-private")
+				return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
+			},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -408,6 +452,8 @@ func TestTheGuardAndTheFetchSayWhatAResolveSays(t *testing.T) {
 				environment = gitResolveEnvironment(row.resolve...)
 			case strings.HasPrefix(row.name, "an HTTPS"):
 				environment = httpsResolveEnvironment(row.resolve...)
+			case strings.HasPrefix(row.name, "an S3"):
+				environment = s3ResolveEnvironment("https://objects.example.com", "app.tar.gz", "sha256:"+strings.Repeat("d", 64), row.resolve...)
 			default:
 				environment = withRunnerProtocol(append([]string{envOperationID + "=resolve-oci"}, row.resolve...))
 			}

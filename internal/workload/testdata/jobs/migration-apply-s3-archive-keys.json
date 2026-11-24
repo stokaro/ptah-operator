@@ -1,0 +1,482 @@
+{
+  "metadata": {
+    "name": "ptah-m-apply-orders-37a321f2d1bf7bee",
+    "namespace": "team-a",
+    "labels": {
+      "app.kubernetes.io/component": "migration-operation",
+      "app.kubernetes.io/managed-by": "ptah-operator",
+      "operator.ptah.run/migration": "orders",
+      "operator.ptah.run/operation": "apply",
+      "operator.ptah.run/operation-id": "5d4cc820b37f3d1f"
+    },
+    "annotations": {
+      "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+      "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "operator.ptah.run/controller-revision": "controller-test-revision",
+      "operator.ptah.run/controller-state-version": "1",
+      "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+      "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operator.ptah.run/ptah-version": "v0.3.0"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "kind": "PtahMigration",
+        "name": "orders",
+        "uid": "migration-uid",
+        "controller": true,
+        "blockOwnerDeletion": true
+      }
+    ]
+  },
+  "spec": {
+    "parallelism": 1,
+    "completions": 1,
+    "activeDeadlineSeconds": 360,
+    "backoffLimit": 0,
+    "manualSelector": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/migration": "orders",
+          "operator.ptah.run/operation": "apply",
+          "operator.ptah.run/operation-id": "5d4cc820b37f3d1f"
+        },
+        "annotations": {
+          "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+          "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "operator.ptah.run/controller-revision": "controller-test-revision",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+          "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "operator.ptah.run/ptah-version": "v0.3.0"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "runner",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "128Mi"
+            }
+          },
+          {
+            "name": "database-url",
+            "secret": {
+              "secretName": "database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
+            "name": "schema-source",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "129536Ki"
+            }
+          },
+          {
+            "name": "fetch-work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "66688Ki"
+            }
+          },
+          {
+            "name": "s3-credentials",
+            "secret": {
+              "secretName": "releases-keys",
+              "items": [
+                {
+                  "key": "accessKeyID",
+                  "path": "access-key-id",
+                  "mode": 288
+                },
+                {
+                  "key": "secretAccessKey",
+                  "path": "secret-access-key",
+                  "mode": 288
+                },
+                {
+                  "key": "sessionToken",
+                  "path": "session-token",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420,
+              "optional": true
+            }
+          }
+        ],
+        "initContainers": [
+          {
+            "name": "install-runner",
+            "image": "example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "command": [
+              "/ptah-runner"
+            ],
+            "args": [
+              "--install-to",
+              "/runner/ptah-runner"
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "mountPath": "/runner"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          },
+          {
+            "name": "fetch-s3-source",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--fetch-s3-source",
+              "/source/migrations",
+              "--ptah-binary",
+              "/usr/local/bin/ptah"
+            ],
+            "workingDir": "/fetch-work",
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/fetch-work"
+              },
+              {
+                "name": "PTAH_OPERATOR_EXPECTED_CONTENT_DIGEST",
+                "value": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_ACCESS_KEY_ID_FILE",
+                "value": "/credentials/s3/access-key-id"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_BUCKET",
+                "value": "app-releases"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_BUCKET_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "releases-keys",
+                    "key": "bucket",
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_CA_SHA256_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "releases-keys",
+                    "key": "caSHA256",
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_DIGEST",
+                "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_ENDPOINT",
+                "value": "https://objects.example.com"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_FORMAT",
+                "value": "TarGzip"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_HOST_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "releases-keys",
+                    "key": "host"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_KEY",
+                "value": "app/1.4.0/app.tar.gz"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_PATH",
+                "value": "app-1.4.0/db/migrations"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_REGION",
+                "value": "auto"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_SECRET_ACCESS_KEY_FILE",
+                "value": "/credentials/s3/secret-access-key"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_SELECTS",
+                "value": "directory"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_SESSION_TOKEN_FILE",
+                "value": "/credentials/s3/session-token"
+              },
+              {
+                "name": "PTAH_OPERATOR_S3_VERSION_ID",
+                "value": "3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "1"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/fetch-work"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
+                "name": "schema-source",
+                "mountPath": "/source"
+              },
+              {
+                "name": "fetch-work",
+                "mountPath": "/fetch-work"
+              },
+              {
+                "name": "s3-credentials",
+                "readOnly": true,
+                "mountPath": "/credentials/s3"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "FallbackToLogsOnError",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "ptah",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--max-result-bytes",
+              "8388608",
+              "--max-plan-bytes",
+              "8388608",
+              "--operation",
+              "migration-apply"
+            ],
+            "workingDir": "/work",
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/work"
+              },
+              {
+                "name": "PTAH_CONNECT_TIMEOUT",
+                "value": "7s"
+              },
+              {
+                "name": "PTAH_COORDINATION_DIGEST",
+                "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
+              },
+              {
+                "name": "PTAH_DISPATCH_NOT_AFTER",
+                "value": "2026-08-30T12:02:00Z"
+              },
+              {
+                "name": "PTAH_EXECUTION_NOT_AFTER",
+                "value": "2026-08-30T12:05:00Z"
+              },
+              {
+                "name": "PTAH_EXPECTED_COORDINATION_DIGEST",
+                "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
+              },
+              {
+                "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                "value": "PostgreSQL"
+              },
+              {
+                "name": "PTAH_EXPECTED_MIGRATION_HISTORY_FINGERPRINT",
+                "value": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+              },
+              {
+                "name": "PTAH_EXPECTED_MIGRATION_SEQUENCE",
+                "value": "[{\"version\":3,\"version_key\":\"\",\"checksum\":\"h1:orders-0003\",\"checkpoint\":false,\"transaction_mode\":\"\"}]"
+              },
+              {
+                "name": "PTAH_EXPECTED_MIGRATION_SEQUENCE_DIGEST",
+                "value": "sha256:d63511bc70fe1b0e03b83c586c1d41b97848fe3e8ad3d8d8c9200de2e7ce2d60"
+              },
+              {
+                "name": "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
+                "value": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+              },
+              {
+                "name": "PTAH_MIGRATIONS_DIR",
+                "value": "/source/migrations"
+              },
+              {
+                "name": "PTAH_MIGRATION_LOCK_TIMEOUT",
+                "value": "12s"
+              },
+              {
+                "name": "PTAH_OPERATION_ID",
+                "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              {
+                "name": "PTAH_OPERATOR_DB_URL_FILE",
+                "value": "/credentials/database/url"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "1"
+              },
+              {
+                "name": "PTAH_TERMINATION_GRACE_PERIOD_SECONDS",
+                "value": "30"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/work"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
+                "name": "work",
+                "mountPath": "/work"
+              },
+              {
+                "name": "database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/database"
+              },
+              {
+                "name": "schema-source",
+                "readOnly": true,
+                "mountPath": "/source"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "restartPolicy": "Never",
+        "terminationGracePeriodSeconds": 30,
+        "activeDeadlineSeconds": 360,
+        "dnsPolicy": "ClusterFirst",
+        "nodeSelector": {
+          "workload": "database"
+        },
+        "serviceAccountName": "migration-jobs",
+        "automountServiceAccountToken": false,
+        "securityContext": {
+          "runAsUser": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "fsGroup": 65532,
+          "fsGroupChangePolicy": "OnRootMismatch",
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "imagePullSecrets": [
+          {
+            "name": "image-pull"
+          }
+        ],
+        "schedulerName": "default-scheduler",
+        "enableServiceLinks": false
+      }
+    },
+    "completionMode": "NonIndexed",
+    "suspend": false,
+    "podReplacementPolicy": "Failed"
+  },
+  "status": {}
+}

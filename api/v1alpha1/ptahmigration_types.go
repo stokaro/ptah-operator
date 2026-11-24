@@ -14,9 +14,9 @@ const (
 	// MigrationPhasePending is a migration whose plan or operation claim the
 	// controller discarded because its inputs changed. The next pass starts
 	// the read-only chain again from the source. A new migration has no phase
-	// until its first pass. An OCI, Git or HTTPS source moves it to Resolving
-	// while a Resolve Job runs; a ConfigMap source, which the manager reads
-	// itself, moves it straight to Reading.
+	// until its first pass. An OCI, Git, HTTPS or S3 source moves it to
+	// Resolving while a Resolve Job runs; a ConfigMap source, which the manager
+	// reads itself, moves it straight to Reading.
 	MigrationPhasePending MigrationPhase = "Pending"
 	// MigrationPhaseResolving is resolving the artifact reference to a digest.
 	MigrationPhaseResolving MigrationPhase = "Resolving"
@@ -331,15 +331,17 @@ type MigrationDriftCheck struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.https) || self.artifact.https.format != 'File'",message="artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"
+// +kubebuilder:validation:XValidation:rule="!has(self.artifact.s3) || self.artifact.s3.format != 'File'",message="artifact.s3.format is TarGzip or Zip: a migration directory comes in an archive"
 type PtahMigrationSpec struct {
 	// Target is the database this sequence runs against, named through a Secret
 	// the manager never reads.
 	Target DatabaseTargetSpec `json:"target"`
 
 	// Artifact is the migration directory this history is matched against:
-	// an OCI artifact, a ConfigMap, a Git repository or an HTTPS archive. It
-	// reuses the schema path's source contract: fetching it never hands a
-	// registry, Git or HTTPS credential to the process that runs SQL.
+	// an OCI artifact, a ConfigMap, a Git repository, an HTTPS archive or an
+	// S3 object. It reuses the schema path's source contract: fetching it
+	// never hands a registry, Git, HTTPS or S3 credential to the process that
+	// runs SQL.
 	Artifact SourceSpec `json:"artifact"`
 
 	// Policy decides what may run without a person: the apply mode, the
@@ -580,7 +582,7 @@ type MigrationRunStatus struct {
 	// +optional
 	ArtifactDigest string `json:"artifactDigest,omitempty"`
 	// Source is the source the run read its files from, for a ConfigMap, a Git
-	// commit or an HTTPS download.
+	// commit, an HTTPS download or an S3 object.
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// TargetIdentityDigest is the credential-free identity of the database the

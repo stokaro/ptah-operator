@@ -161,6 +161,55 @@ spec:
   interval: 30m
 ```
 
+### From a file in an S3 bucket
+
+The desired schema is one object in an S3-compatible bucket, pinned by the
+SHA-256 of the exact bytes GetObject returns: the number `sha256sum` prints
+for the file that was uploaded, not the ETag or a checksum the bucket stores.
+With `format: File` the object is the schema itself, and `path` is the name it
+is given. A Resolve Job reads the object, refuses other bytes, and records the
+content digest of the file and the version the bucket served; every later
+operation reads that version again and is held to both digests. The request
+is path-style, `https://objects.example.com:9000/inventory-schemas/<key>`.
+
+The credential Secret `inventory-objects` holds `accessKeyID` and
+`secretAccessKey` (and `sessionToken` for a temporary key),
+`host: objects.example.com:9000`, the only endpoint the fetch signs for,
+`bucket: inventory-schemas`, the only bucket, and `caSHA256`, the digest of
+the CA bundle it may be sent under. The manager never reads the Secret or the
+object. An unsigned request, for a public bucket, leaves `authFrom` out.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    s3:
+      endpoint: https://objects.example.com:9000
+      region: us-east-1
+      bucket: inventory-schemas
+      key: inventory/1.4.0/schema.hcl
+      digest: sha256:5f3c8b2e1d0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706
+      format: File
+      path: schema.hcl
+      authFrom:
+        name: inventory-objects
+      transport:
+        caFrom:
+          name: objects-ca
+          key: ca.pem
+  interval: 30m
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use

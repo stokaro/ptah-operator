@@ -23,6 +23,7 @@ var groups = []func(*testing.T, *catalog){
 	controllerRows,
 	credentialDeliveryRows,
 	httpsSourceRows,
+	s3SourceRows,
 	cleanupRows,
 	resultJobRows,
 	applyPolicyRows,

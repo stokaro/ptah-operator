@@ -620,17 +620,53 @@ fetched files from a volume and holds neither. What a download yields is
 bounded by Ptah's pull: an archive entry outside the archive and a symbolic
 link in the selection are refused by name.
 
+## S3 sources
+
+An S3 source is trusted by its digest, as an HTTPS source is: whoever may
+write the resource names the exact bytes the operator reads, and the bucket can
+serve them or fail. A version the endpoint served at Resolve is the version
+every later operation reads, and its bytes are held to the same digest.
+
+The manager never reads the bucket or the credential Secret. The Secret's
+fixed keys name the key pair's scope: `host`, the only endpoint authority it
+is used for, `bucket`, if present, the only bucket it signs for, and
+`caSHA256`, the digest of the CA it may be sent under. A resource that names
+the Secret with another endpoint, another bucket or another CA, a resource that
+selects no CA under a Secret that pins one, or a Secret with half a key pair or
+a session token without one, is refused in the Pod before any request is sent.
+The key pair in the Secret is the only credential the fetch uses: it reads no
+`AWS_*` variable, no shared credentials file, no instance metadata and no web
+identity token, so a cloud identity bound to the operation's ServiceAccount,
+which every container in the Pod could reach, is never what signs. The fetch
+follows no redirect and uses no proxy.
+
+The key pair needs `s3:GetObject` on the objects a resource names and, in a
+bucket that keeps versions, `s3:GetObjectVersion`: every operation after a
+Resolve asks for the version the Resolve recorded, and S3 authorizes that
+request as `s3:GetObjectVersion`. A bucket policy that lets anyone read needs
+both for the same reason. Nothing needs `s3:ListBucket`, and without it S3
+answers a missing key with `AccessDenied` rather than `NoSuchKey`.
+
+Only the `fetch-s3-source` init container, and the Resolve container, mount
+the Secret and the CA, and no process starts while either holds the key: the
+runner signs and sends the request itself. The container that holds the
+database URL reads the fetched files from a volume and holds neither. An
+archive's entries are read by the same rules as an HTTPS archive's: an entry
+outside the archive and a symbolic link in the selection are refused by name.
+
 ## Source policies
 
-A team that wants to bound what its ConfigMap, Git and HTTPS sources may name
-sets `sourcePolicyFrom` on the resource: an immutable ConfigMap holding a YAML
-document with up to four rules.
+A team that wants to bound what its ConfigMap, Git, HTTPS and S3 sources may
+name sets `sourcePolicyFrom` on the resource: an immutable ConfigMap holding a
+YAML document with up to five rules.
 
 ```yaml
 allowedGitHosts:          # the only host[:port] a Git source may name
   - git.example.com
 allowedHTTPSHosts:        # the only host[:port] an HTTPS source may name
   - artifacts.example.com
+allowedS3Buckets:         # the only host[:port]/bucket an S3 source may name
+  - objects.example.com/orders-releases
 allowedConfigMaps:        # the only ConfigMaps a ConfigMap source may name
   - inventory-schema
 maxContentBytes: 1048576  # the most the selected files may hold together
@@ -641,12 +677,16 @@ allows nothing of its kind. A field the document does not define is refused, so
 a misspelled rule is not read as one kept. Hosts compare as ASCII without case:
 a source whose host holds any other character is refused by name, and an entry
 that holds one allows nothing, since the fetch would dial such a name by its
-IDNA form. Write an internationalized name in its `xn--` form. The manager
-reads the policy, never the source's credential: a Git or HTTPS host it does
-not allow gets no Resolve Job, so the credential is never sent there; a
-ConfigMap it does not allow, or files that hold too much, leave no snapshot; a
-Git commit or an HTTPS download whose selected files hold too much is not
-recorded. The refusal names the rule.
+IDNA form. Write an internationalized name in its `xn--` form. An
+`allowedS3Buckets` entry names the endpoint's authority and the bucket
+together, the host compared as above and the bucket exactly, and
+`allowedHTTPSHosts` says nothing about an S3 endpoint: an endpoint serves every
+bucket on it, and allowing one is not allowing the rest. The manager reads the
+policy, never the source's credential: a Git or HTTPS host, or an S3 endpoint
+and bucket, it does not allow gets no Resolve Job, so the credential is never
+sent there; a ConfigMap it does not allow, or files that hold too much, leave
+no snapshot; a Git commit, an HTTPS download or an S3 object whose selected
+files hold too much is not recorded. The refusal names the rule.
 
 A plan binds the policy's object and bytes beside the source. Another policy,
 the same bytes in another ConfigMap included, retires the plan, and so does
@@ -969,8 +1009,8 @@ cuts `Hunter2Hunter2` to `Hunter2...`, and the SQL reader stops at `PASS` in
 know what else in a file is sensitive either, so keep a value that must not reach
 status out of a desired file.
 
-Outside status and Events, a failed `fetch-git-source` or `fetch-https-source`
-init container writes standard error, handled by the same function, to its log, and the kubelet copies
+Outside status and Events, a failed `fetch-git-source`, `fetch-https-source` or
+`fetch-s3-source` init container writes standard error, handled by the same function, to its log, and the kubelet copies
 the end of that log into the Pod's status. When the runner refuses the source's
 access in one of them, or in the `validate-source-authority` step before an OCI
 fetch, it writes a refusal record to the termination message instead: the code
@@ -1020,7 +1060,7 @@ environment: the container runtime on the node keeps a stopped container's
 environment until the Pod is removed, and that environment holds the paths of the
 credential files and the grants, which hold no credential. The files are in Secret
 volumes, which the kubelet unmounts once the Pod's containers have stopped, so root on
-the node reads the database URL, and for a migration Apply the registry, Git or HTTPS
+the node reads the database URL, and for a migration Apply the registry, Git, HTTPS or S3
 credential, only while the Pod runs. A Job 0.2.10 created still carries its
 credentials in its environment for the 24 hours. Once you have read the reason you
 can end the wait early: `kubectl delete job -n <namespace> <job>` removes the Job and

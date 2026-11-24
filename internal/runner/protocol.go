@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -233,11 +234,15 @@ type Result struct {
 	// selected files there.
 	ResolvedCommit        string `json:"resolvedCommit,omitempty"`
 	ResolvedContentDigest string `json:"resolvedContentDigest,omitempty"`
-	// ResolvedDownloadDigest is the digest of the bytes resolving an HTTPS
-	// source downloaded; ResolvedContentDigest is then the content digest of
-	// the files it selected. A resolution names a commit or a download, never
-	// both.
+	// ResolvedDownloadDigest is the digest of the bytes resolving an HTTPS or
+	// an S3 source downloaded; ResolvedContentDigest is then the content
+	// digest of the files it selected. A resolution names a commit or a
+	// download, never both.
 	ResolvedDownloadDigest string `json:"resolvedDownloadDigest,omitempty"`
+	// ResolvedVersionID is the object version resolving an S3 source read:
+	// the one the spec named, or the one the endpoint said it served. It is
+	// empty for an object in a bucket that keeps no versions.
+	ResolvedVersionID string `json:"resolvedVersionId,omitempty"`
 	// ResolvedContentBytes is how much the selected files hold together,
 	// which a source policy may bound.
 	ResolvedContentBytes     int64       `json:"resolvedContentBytes,omitempty"`
@@ -805,7 +810,8 @@ func validateResult(result Result, options ParseOptions) error {
 			return fmt.Errorf("%w: invalid truncation metadata", ErrMalformedFrame)
 		}
 	}
-	if result.Error != nil && (result.Error.Code == CodeInvalidOCIAccess || result.Error.Code == CodeInvalidGitAccess || result.Error.Code == CodeInvalidHTTPSAccess) {
+	if result.Error != nil && (result.Error.Code == CodeInvalidOCIAccess || result.Error.Code == CodeInvalidGitAccess ||
+		result.Error.Code == CodeInvalidHTTPSAccess || result.Error.Code == CodeInvalidS3Access) {
 		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
@@ -857,10 +863,14 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	remoteResolution := result.ResolvedCommit != "" || result.ResolvedContentDigest != "" || result.ResolvedDownloadDigest != ""
 	if result.ResolvedContentBytes < 0 || (result.ResolvedContentBytes != 0 && !remoteResolution) {
-		return fmt.Errorf("%w: content size without a Git or HTTPS resolution", ErrMalformedFrame)
+		return fmt.Errorf("%w: content size without a Git, HTTPS or S3 resolution", ErrMalformedFrame)
 	}
 	if result.ResolvedCommit != "" && result.ResolvedDownloadDigest != "" {
 		return fmt.Errorf("%w: a resolution names both a commit and a download", ErrMalformedFrame)
+	}
+	if result.ResolvedVersionID != "" && (result.ResolvedDownloadDigest == "" ||
+		len(result.ResolvedVersionID) > maxResolvedVersionIDBytes || !resolvedVersionID.MatchString(result.ResolvedVersionID)) {
+		return fmt.Errorf("%w: an object version without a download, or not 1 to %d bytes of printable ASCII", ErrMalformedFrame, maxResolvedVersionIDBytes)
 	}
 	if result.Operation == OperationResolve {
 		switch {
@@ -1174,6 +1184,13 @@ func hasControlCharacter(value string) bool {
 	}
 	return false
 }
+
+// maxResolvedVersionIDBytes bounds an S3 object version, as the API does.
+const maxResolvedVersionIDBytes = 1024
+
+// resolvedVersionID is printable ASCII without a space, as the API holds an
+// S3 version ID.
+var resolvedVersionID = regexp.MustCompile(`^[!-~]+$`)
 
 func validProtocolDigest(value string) bool {
 	if len(value) != len("sha256:")+sha256.Size*2 || value[:len("sha256:")] != "sha256:" {

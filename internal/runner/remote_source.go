@@ -20,12 +20,14 @@ const (
 	maxRemoteSourceBytes int64 = 64 << 20
 	maxRemoteReportBytes int64 = 4 << 20
 	maxRemoteStderrBytes int64 = 16 << 10
-	// maxTrustFileBytes bounds a CA or known-hosts file a remote source
-	// names.
-	maxTrustFileBytes int64 = 1 << 20
 	// maxPullRefusalBytes bounds the reason a failed pull reports.
 	maxPullRefusalBytes = 512
 )
+
+// MaxTrustFileBytes bounds a CA or known-hosts file a remote source names.
+// A fetch step writes a copy of the CA to its work volume, so the builder
+// sizes that volume with it.
+const MaxTrustFileBytes int64 = 1 << 20
 
 // remoteSource is a source Ptah pulls over the network: one commit of a Git
 // repository, or one HTTPS download. A Resolve pulls it to learn what it
@@ -272,9 +274,9 @@ func readTrustFile(file, kind, name string) ([]byte, error) {
 		return nil, fmt.Errorf("read the %s %s", kind, name)
 	}
 	defer func() { _ = opened.Close() }()
-	bytes, err := io.ReadAll(io.LimitReader(opened, maxTrustFileBytes+1))
-	if err != nil || int64(len(bytes)) > maxTrustFileBytes || len(bytes) == 0 {
-		return nil, fmt.Errorf("the %s %s is empty, unreadable or larger than %d bytes", kind, name, maxTrustFileBytes)
+	bytes, err := io.ReadAll(io.LimitReader(opened, MaxTrustFileBytes+1))
+	if err != nil || int64(len(bytes)) > MaxTrustFileBytes || len(bytes) == 0 {
+		return nil, fmt.Errorf("the %s %s is empty, unreadable or larger than %d bytes", kind, name, MaxTrustFileBytes)
 	}
 	return bytes, nil
 }

@@ -132,6 +132,8 @@ func (r *SchemaReconciler) configMapSourceRefused(ctx context.Context, schema *o
 		kind = "Git"
 	case schema.Spec.Desired.HTTPS != nil:
 		kind = "HTTPS"
+	case schema.Spec.Desired.S3 != nil:
+		kind = "S3"
 	}
 	if schemaSourceResolved(schema) {
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed,
@@ -177,10 +179,11 @@ func planSourceIsCurrent(schema *operatorv1alpha1.PtahSchema, artifactDigest str
 }
 
 // schemaSourceResolved reports whether the schema's source was ever read: an
-// OCI digest, a ConfigMap snapshot, a Git commit or an HTTPS download.
+// OCI digest, a ConfigMap snapshot, a Git commit, an HTTPS download or an S3
+// object version.
 func schemaSourceResolved(schema *operatorv1alpha1.PtahSchema) bool {
 	return schema.Status.Source.Digest != "" || schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil ||
-		schema.Status.Source.HTTPS != nil
+		schema.Status.Source.HTTPS != nil || schema.Status.Source.S3 != nil
 }
 
 // schemaSourceReady reports whether later operations may read the schema's

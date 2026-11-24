@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,10 +15,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-// The Git and the HTTPS fetch modes take the directory and the Ptah binary,
+// The Git, HTTPS and S3 fetch modes take the directory and the Ptah binary,
 // refuse every other flag and each other, and reach the fetch of their own
 // kind: an HTTPS fetch with no HTTPS source configured is refused by the
-// HTTPS fetch, which names its code.
+// HTTPS fetch, which names its code. The S3 fetch starts no Ptah, and takes
+// the binary only so that the Job carries one argument shape.
 func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
@@ -64,6 +69,38 @@ func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 			refusal:     runner.CodeHTTPSSourceRefused + ": no HTTPS source is configured",
 		},
 		{
+			name: "an S3 fetch beside another mode's flag",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary, "--operation", "resolve"}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     "S3 fetch mode takes only --fetch-s3-source and --ptah-binary",
+		},
+		{
+			name: "an S3 and an HTTPS fetch together",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--fetch-https-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     "fetch mode takes only",
+		},
+		{
+			name: "an S3 fetch for another protocol",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion+1)},
+			refusal:     runner.CodeRunnerProtocolMismatch,
+		},
+		{
+			name: "an S3 fetch with no S3 source",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     runner.CodeS3SourceRefused + ": no S3 source is configured",
+		},
+		{
 			name: "a Git fetch with no Git source",
 			arguments: func(binary, destination string) []string {
 				return []string{"--fetch-git-source", destination, "--ptah-binary", binary}
@@ -84,5 +121,38 @@ func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 				t.Fatalf("Ptah ran for a fetch the runner refused (stat error %v)", err)
 			}
 		})
+	}
+}
+
+// An S3 fetch the endpoint refuses says why once, on standard error, where
+// the kubelet reads the step's termination message from: the runner reads
+// the object itself, so there is no child output to report beside it.
+func TestAnS3FetchRefusalIsReportedOnce(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<Error><Code>AccessDenied</Code><Message>Access Denied for this fetch.</Message></Error>"))
+	}))
+	t.Cleanup(server.Close)
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{
+		runnerProtocol,
+		runner.EnvS3Endpoint + "=" + server.URL, runner.EnvS3Region + "=us-east-1", runner.EnvS3Bucket + "=orders",
+		runner.EnvS3Key + "=schema.sql", runner.EnvS3Digest + "=sha256:" + strings.Repeat("e", 64), runner.EnvS3Format + "=File",
+		runner.EnvS3Path + "=schema.sql", runner.EnvS3Selects + "=file", runner.EnvS3CASourceFile + "=" + ca,
+		runner.EnvExpectedContentDigest + "=sha256:" + strings.Repeat("d", 64),
+	}
+	binary, _ := fetchScript(t, 0)
+	var stdout, stderr bytes.Buffer
+	exitCode := run(context.Background(), []string{"--fetch-s3-source", t.TempDir() + "/source", "--ptah-binary", binary},
+		&stdout, &stderr, environment, "")
+	if exitCode != 2 || !strings.Contains(stderr.String(), runner.CodeS3SourceRefused+": ") {
+		t.Fatalf("run() = exit %d, stderr %q, want 2 and the S3 refusal", exitCode, stderr.String())
+	}
+	if count := strings.Count(stderr.String(), "Access Denied for this fetch."); count != 1 {
+		t.Fatalf("standard error says the refusal %d times, want once: %q", count, stderr.String())
 	}
 }

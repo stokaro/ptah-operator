@@ -119,7 +119,7 @@ type artifactFetchRequest struct {
 	containerName string
 	args          []string
 	// destination is the directory under the source volume a snapshot, a
-	// Git commit or an HTTPS download is copied into.
+	// Git commit, an HTTPS download or an S3 object is copied into.
 	destination string
 	// schema says the source is a schema file rather than a migration
 	// directory.
@@ -224,6 +224,13 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 			volumes = append(volumes, fetchVolumes...)
 		case fetch.source.HTTPS != nil:
 			fetchContainer, fetchVolumes, err := b.httpsFetch(*fetch.source.HTTPS, fetch.schema, fetch.destination, resources)
+			if err != nil {
+				return nil, err
+			}
+			initContainers = append(initContainers, fetchContainer)
+			volumes = append(volumes, fetchVolumes...)
+		case fetch.source.S3 != nil:
+			fetchContainer, fetchVolumes, err := b.s3Fetch(*fetch.source.S3, fetch.schema, fetch.destination, resources)
 			if err != nil {
 				return nil, err
 			}
