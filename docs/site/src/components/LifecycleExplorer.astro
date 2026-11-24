@@ -25,16 +25,57 @@
  * history gains no entry per click. Choosing another family starts it afresh,
  * so no path, stage or object of one family is carried into the other.
  *
- * The audit view and the object map sit beside the change journey rather
- * than inside a family: the audit view reads both families by evidence
- * source, and the object map by object. The audit view's loss and source and
- * the object map's object are kept in the query string the same way, and
- * choosing a view starts it afresh, so nothing chosen in one is carried into
- * another.
+ * The audit view, the object map and the composed workflow sit beside the
+ * change journey rather than inside a family: the audit view reads both
+ * families by evidence source, the object map by object, and the composed
+ * workflow as the stages of one larger change. The audit view's loss and
+ * source, the object map's object and the workflow's stage and outcome are
+ * kept in the query string the same way, and choosing a view starts it
+ * afresh, so nothing chosen in one is carried into another.
+ *
+ * A link from one object, source or view to another is an anchor whose
+ * address names what it opens, so it can be opened in a new tab, copied, or
+ * followed by a page whose script stopped. The script follows it in place.
+ * In the text, the same links lead to the entry they name on this page.
  */
-import { actors, audit, defaultFamily, families, objectMap, parentOf, relationTypes, walkOf } from '../lifecycle-explorer.mjs';
+import {
+  actors,
+  audit,
+  defaultFamily,
+  families,
+  objectMap,
+  parentOf,
+  relationTypes,
+  walkOf,
+  workflow,
+} from '../lifecycle-explorer.mjs';
 
 const actorLabel = new Map(actors.map((actor) => [actor.id, actor.label]));
+
+// Addresses inside the explorer. One in the interactive view names the view
+// and the value it opens and ends at the explorer's own anchor; one in the
+// text leads to the entry on this page, which every object, source, path and
+// stage carries as its id.
+const explorerHref = (params: Record<string, string | null>) => {
+  const query = new URLSearchParams(
+    Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1])),
+  ).toString();
+  return `?${query}#lifecycle-explorer`;
+};
+const inFamily = (familyId: string) => (familyId === defaultFamily ? null : familyId);
+const objectHref = (familyId: string, id: string) => explorerHref({ 'lx-family': inFamily(familyId), 'lx-object': id });
+const pathOf = (journey: { family: string; path: string }) =>
+  families.find((family) => family.id === journey.family)?.paths.find((path) => path.id === journey.path);
+const pathHref = (journey: { family: string; path: string }) =>
+  explorerHref({
+    'lx-family': inFamily(journey.family),
+    'lx-path': journey.path,
+    'lx-stage': pathOf(journey)?.stages?.[0]?.id ?? null,
+  });
+const sourceHref = (id: string) => explorerHref({ 'lx-view': 'audit', 'lx-source': id });
+const nodeHref = (id: string) => explorerHref({ 'lx-view': 'objects', 'lx-node': id });
+const textId = (id: string) => `lx-text-${id}`;
+const textHref = (id: string) => `#${textId(id)}`;
 const typeById = new Map(relationTypes.map((type) => [type.id, type]));
 
 // The actors a stage names, the lead first, then in the fixed order.
@@ -224,6 +265,27 @@ const objectMapModel = {
   relations: objectMap.relations.map(({ from, to, type }) => ({ from, to, type })),
   types: Object.fromEntries(objectMap.types.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
 };
+
+// Everything the composed workflow and its text are drawn from.
+const outcomeById = new Map(workflow.outcomes.map((outcome) => [outcome.id, outcome]));
+const decisionById = new Map(workflow.decisions.map((decision) => [decision.id, decision]));
+const markLabel = new Map(workflow.marks.map((mark) => [mark.id, mark.label]));
+const workflowFamily = new Map(workflow.families.map((family) => [family.id, family.label]));
+const stageFamily = (family: string) => workflowFamily.get(family);
+// What a stop at one stage holds: every stage after it, or none after the
+// last.
+const heldAfter = (index: number) =>
+  workflow.stages
+    .slice(index + 1)
+    .map((stage) => stage.title)
+    .join(', ');
+
+// What the script needs to mark each stage and to know which outcomes stop
+// which stage.
+const workflowModel = {
+  stages: workflow.stages.map((stage) => ({ id: stage.id, outcomes: stage.outcomes.map((one) => one.outcome) })),
+  outcomes: Object.fromEntries(workflow.outcomes.map((outcome) => [outcome.id, outcome.label])),
+};
 ---
 
 <section
@@ -243,6 +305,7 @@ const objectMapModel = {
       <button type="button" class="lx__path" data-lx-view="journey" aria-pressed="true">Change journey</button>
       <button type="button" class="lx__path" data-lx-view="audit" aria-pressed="false">Audit</button>
       <button type="button" class="lx__path" data-lx-view="objects" aria-pressed="false">Object map</button>
+      <button type="button" class="lx__path" data-lx-view="workflow" aria-pressed="false">Composed workflow</button>
     </div>
 
     <div class="lx__journey" data-lx-journey>
@@ -490,14 +553,19 @@ const objectMapModel = {
                         <span class="lx__swatch" aria-hidden="true" />
                         <span>
                           <strong>{relation.label}</strong>{' '}
-                          <button type="button" class="lx__link-button" data-lx-select={relation.other}>
+                          <a
+                            class="lx__link"
+                            href={objectHref(view.family.id, relation.other)}
+                            data-lx-select={relation.other}
+                            data-lx-link
+                          >
                             {breakable(view.objectById.get(relation.other).label).map((part, index) => (
                               <>
                                 {index > 0 && <wbr />}
                                 {part}
                               </>
                             ))}
-                          </button>
+                          </a>
                           . {relation.text}
                         </span>
                       </li>
@@ -690,9 +758,9 @@ const objectMapModel = {
                 <p class="lx__goto">
                   <span class="lx__label">Recorded in</span>
                   {identity.recordedIn.map((id) => (
-                    <button type="button" class="lx__chip" data-lx-source-select={id}>
+                    <a class="lx__chip" href={sourceHref(id)} data-lx-source-select={id} data-lx-link>
                       {sourceById.get(id).label}
-                    </button>
+                    </a>
                   ))}
                 </p>
               </li>
@@ -841,14 +909,14 @@ const objectMapModel = {
                   <span class="lx__swatch" aria-hidden="true" />
                   <span>
                     <strong>{relation.label}</strong>{' '}
-                    <button type="button" class="lx__link-button" data-lx-node-select={relation.other}>
+                    <a class="lx__link" href={nodeHref(relation.other)} data-lx-node-select={relation.other} data-lx-link>
                       {breakable(nodeById.get(relation.other).label).map((part, index) => (
                         <>
                           {index > 0 && <wbr />}
                           {part}
                         </>
                       ))}
-                    </button>
+                    </a>
                     . {relation.text}
                   </span>
                 </li>
@@ -901,6 +969,311 @@ const objectMapModel = {
         .
       </p>
     </div>
+
+    <div class="lx__workflow" data-lx-workflow data-lx-workflow-model={JSON.stringify(workflowModel)} hidden>
+      <p class="lx__title">{workflow.title}</p>
+      <p class="lx__summary">{workflow.summary}</p>
+      <p class="lx__proposal" data-lx-proposal>
+        <span class="lx__mark" data-mark="proposed">{workflow.proposal.label}</span> {workflow.proposal.text}
+      </p>
+      <ul class="lx__marks" aria-label="What the marks say">
+        {
+          workflow.marks.map((mark) => (
+            <li>
+              <span class="lx__mark" data-mark={mark.id}>
+                {mark.label}
+              </span>{' '}
+              {mark.text}
+            </li>
+          ))
+        }
+      </ul>
+
+      <div class="lx__bar">
+        <p class="lx__count" data-lx-wcount aria-live="polite">
+          Stage 1 of {workflow.stages.length}: {workflow.stages[0].title}
+        </p>
+        <div class="lx__nav">
+          <button type="button" class="lx__button" data-lx-wprev disabled>
+            Previous
+          </button>
+          <button type="button" class="lx__button" data-lx-wnext>
+            Next
+          </button>
+        </div>
+      </div>
+      <ol
+        class="lx__steps lx__wsteps"
+        data-lx-wsteps
+        aria-label="Stages of the composed workflow. Use the arrow keys to move between them."
+      >
+        {
+          workflow.stages.map((stage, index) => (
+            <li>
+              <button
+                type="button"
+                class="lx__step"
+                data-lx-wstep={stage.id}
+                data-family={stage.family}
+                data-state={index === 0 ? 'current' : 'ahead'}
+                aria-current={index === 0 ? 'step' : undefined}
+                tabindex={index === 0 ? 0 : -1}
+                aria-label={`Stage ${index + 1}: ${stage.title}`}
+              >
+                <span class="lx__step-n">{index + 1}</span>
+                <span class="lx__step-t">
+                  <span data-lx-wtitle>{stage.title}</span>
+                  <span class="lx__step-mark" data-lx-wmark />
+                </span>
+              </button>
+            </li>
+          ))
+        }
+      </ol>
+      <p class="lx__wstatus" data-lx-wstatus aria-live="polite" hidden></p>
+
+      <div class="lx__stages">
+        {
+          workflow.stages.map((stage, index) => (
+            <div class="lx__panel" data-lx-wstage-panel={stage.id} hidden={index !== 0}>
+              <div class="lx__panel-head">
+                <p class="lx__panel-title">
+                  <span class="lx__panel-n">{index + 1}</span>
+                  {stage.title}
+                  <span class="lx__branch-tag" data-lx-wfamily={stage.family}>
+                    {stageFamily(stage.family)}
+                  </span>
+                </p>
+              </div>
+              <p>{stage.goal}</p>
+              <p>
+                <span class="lx__label">You</span> {stage.person}
+              </p>
+              <div class="lx__inspect">
+                <span class="lx__label">{stage.family === 'outside' ? 'Where' : 'Commands'}</span>
+                {stage.inspect.map((step) =>
+                  step.command ? (
+                    <div class="lx__command">
+                      <pre><code>{step.command}</code></pre>
+                      <p>{step.says}</p>
+                    </div>
+                  ) : (
+                    <div class="lx__command">
+                      <p>
+                        <strong>{step.system}</strong> {step.says}
+                      </p>
+                    </div>
+                  ),
+                )}
+              </div>
+              <p data-lx-wpart="operator">
+                <span class="lx__label">The operator</span>{' '}
+                <span class="lx__mark" data-mark="shipped">
+                  {markLabel.get('shipped')}
+                </span>{' '}
+                {stage.operator}
+              </p>
+              {stage.decision && (
+                <p data-lx-wpart="decision">
+                  <span class="lx__label">Decision</span> <strong>{decisionById.get(stage.decision).label}.</strong>{' '}
+                  {stage.decisionText}
+                </p>
+              )}
+              <p data-lx-wpart="gate">
+                <span class="lx__label">Moves on when</span>{' '}
+                <span class="lx__mark" data-mark="proposed">
+                  {markLabel.get('proposed')}
+                </span>{' '}
+                {stage.gate}
+              </p>
+              <p class="lx__done">
+                <span class="lx__label">Done when</span> {stage.done}
+              </p>
+              {stage.limits && (
+                <p class="lx__limits">
+                  <span class="lx__label">What it does not prove</span> {stage.limits}
+                </p>
+              )}
+              <div class="lx__turn" role="group" aria-label={`What can stop ${stage.title}`}>
+                <p class="lx__label">What can stop it. Choose one to see what it holds</p>
+                <div class="lx__turn-options">
+                  {stage.outcomes.map((one) => (
+                    <button
+                      type="button"
+                      class="lx__turn-option"
+                      data-lx-woutcome={one.outcome}
+                      data-outcome={one.outcome}
+                      aria-pressed="false"
+                    >
+                      <strong>{outcomeById.get(one.outcome).label}</strong>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {stage.outcomes.map((one) => (
+                <div class="lx__wstop" data-lx-wstop={one.outcome} hidden>
+                  <p>
+                    <span class="lx__label">Here</span> {one.text}
+                  </p>
+                  <p>
+                    <span class="lx__label">Clears it</span> {one.recovery}
+                  </p>
+                  <p>
+                    <span class="lx__label">Held</span>{' '}
+                    {heldAfter(index) ? `${heldAfter(index)}, until it is cleared.` : 'Nothing: no stage follows it.'}
+                  </p>
+                  {one.journey && (
+                    <p>
+                      <span class="lx__label">In the change journey</span>{' '}
+                      <a href={pathHref(one.journey)} data-lx-open data-lx-link>
+                        {pathOf(one.journey).label}
+                      </a>
+                    </p>
+                  )}
+                </div>
+              ))}
+              <p class="lx__goto">
+                <span class="lx__label">Objects</span>
+                {stage.objects.map((id) => (
+                  <a class="lx__chip" href={nodeHref(id)} data-lx-open data-lx-link>
+                    {breakable(nodeById.get(id).label).map((part, at) => (
+                      <>
+                        {at > 0 && <wbr />}
+                        {part}
+                      </>
+                    ))}
+                  </a>
+                ))}
+              </p>
+              <p class="lx__links">
+                {stage.links.map((link) => (
+                  <a href={link.href}>{link.label}</a>
+                ))}
+              </p>
+            </div>
+          ))
+        }
+      </div>
+
+      <div class="lx__map">
+        <p class="lx__map-title">Before the first stage</p>
+        <ul class="lx__identities">
+          {
+            workflow.preconditions.map((precondition) => (
+              <li data-lx-precondition={precondition.id}>
+                <p>
+                  <strong>{precondition.title}.</strong> {precondition.text}
+                </p>
+                <p class="lx__goto">
+                  <span class="lx__label">Objects</span>
+                  {precondition.objects.map((id) => (
+                    <a class="lx__chip" href={nodeHref(id)} data-lx-open data-lx-link>
+                      {nodeById.get(id).label}
+                    </a>
+                  ))}
+                </p>
+                <p class="lx__links">
+                  {precondition.links.map((link) => (
+                    <a href={link.href}>{link.label}</a>
+                  ))}
+                </p>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div class="lx__map">
+        <p class="lx__map-title">What can stop a stage</p>
+        <ul class="lx__gaps">
+          {
+            workflow.outcomes.map((outcome) => (
+              <li data-lx-woutcome-text={outcome.id}>
+                <strong>{outcome.label}.</strong> {outcome.text}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div class="lx__map">
+        <p class="lx__map-title">What each decision covers</p>
+        <ul class="lx__identities">
+          {
+            workflow.decisions.map((decision) => (
+              <li data-lx-decision={decision.id}>
+                <p>
+                  <strong>{decision.label}</strong>
+                  {decision.node && (
+                    <>
+                      {' · '}
+                      <a href={nodeHref(decision.node)} data-lx-open data-lx-link>
+                        in the object map
+                      </a>
+                    </>
+                  )}
+                </p>
+                <p>
+                  <span class="lx__label">Covers</span> {decision.covers}
+                </p>
+                <p>
+                  <span class="lx__label">Does not cover</span> {decision.notCovered}
+                </p>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div class="lx__map">
+        <p class="lx__map-title">The record a pipeline can keep</p>
+        <p>{workflow.recordText}</p>
+        <ul class="lx__gaps">
+          {
+            workflow.record.map((field) => (
+              <li data-lx-record={field.id}>
+                <strong>{field.label}.</strong> {field.text}
+              </li>
+            ))
+          }
+        </ul>
+        <div class="lx__inspect">
+          <span class="lx__label">Read it from</span>
+          {
+            workflow.readers.map((reader) => (
+              <div class="lx__command">
+                <pre><code>{reader.command}</code></pre>
+                <p>{reader.says}</p>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+
+      <div class="lx__map">
+        <p class="lx__map-title">What the sequence keeps apart</p>
+        <ul class="lx__distinctions">
+          {
+            workflow.distinctions.map((distinction) => (
+              <li>{distinction}</li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <p class="lx__later">
+        Read more:{' '}
+        {
+          workflow.links.map((link, index) => (
+            <>
+              {index > 0 && ', '}
+              <a href={link.href}>{link.label}</a>
+            </>
+          ))
+        }
+        .
+      </p>
+    </div>
   </div>
 
   <div class="lx__text" data-lx-text>
@@ -910,7 +1283,7 @@ const objectMapModel = {
           <p class="lx__title">{view.scenario.title}</p>
           <p class="lx__summary">{view.scenario.summary}</p>
           {view.textBlocks.map((block) => (
-            <div class="lx__text-path" data-lx-text-path={block.path.id}>
+            <div class="lx__text-path" id={textId(block.path.id)} data-lx-text-path={block.path.id}>
               <p>
                 <strong>Path: {block.path.title}.</strong> {block.path.summary}
                 {block.before && (
@@ -970,12 +1343,13 @@ const objectMapModel = {
           </p>
           <ul class="lx__text-objects">
             {view.objects.map((object) => (
-              <li data-lx-text-object={object.id}>
+              <li id={textId(object.id)} data-lx-text-object={object.id}>
                 <strong>{object.label}</strong> ({object.kind}). {object.purpose} {object.lives}
                 <ul>
                   {view.relationsOf(object.id).map((relation) => (
                     <li>
-                      {relation.label} {view.objectById.get(relation.other).label}: {relation.text}
+                      {relation.label} <a href={textHref(relation.other)}>{view.objectById.get(relation.other).label}</a>:{' '}
+                      {relation.text}
                     </li>
                   ))}
                 </ul>
@@ -1009,7 +1383,7 @@ const objectMapModel = {
             </p>
             <ul class="lx__text-objects">
               {group.sources.map((source) => (
-                <li data-lx-text-source={source.id}>
+                <li id={textId(source.id)} data-lx-text-source={source.id}>
                   <p>
                     <strong>{source.label}.</strong> {source.records}
                   </p>
@@ -1061,7 +1435,13 @@ const objectMapModel = {
             audit.identities.map((identity) => (
               <li data-lx-text-identity={identity.id}>
                 <strong>{identity.label}.</strong> {identity.text} {identity.note} Recorded in:{' '}
-                {identity.recordedIn.map((id) => sourceById.get(id).label).join(', ')}.
+                {identity.recordedIn.map((id, index) => (
+                  <>
+                    {index > 0 && ', '}
+                    <a href={textHref(id)}>{sourceById.get(id).label}</a>
+                  </>
+                ))}
+                .
               </li>
             ))
           }
@@ -1131,7 +1511,7 @@ const objectMapModel = {
             </p>
             <ul class="lx__text-objects">
               {group.nodes.map((node) => (
-                <li data-lx-text-node={node.id}>
+                <li id={textId(node.id)} data-lx-text-node={node.id}>
                   <p>
                     <strong>{node.label}</strong> ({node.kind}; {scopeLabel.get(node.scope)}; {familiesOf(node)}).{' '}
                     {node.holds}
@@ -1145,7 +1525,8 @@ const objectMapModel = {
                   <ul>
                     {nodeRelations(node.id).map((relation) => (
                       <li data-lx-text-relation={`${relation.type}:${relation.other}`}>
-                        {relation.label} {nodeById.get(relation.other).label}: {relation.text}
+                        {relation.label} <a href={textHref(relation.other)}>{nodeById.get(relation.other).label}</a>:{' '}
+                        {relation.text}
                       </li>
                     ))}
                   </ul>
@@ -1180,6 +1561,195 @@ const objectMapModel = {
         Read more:{' '}
         {
           objectMap.links.map((link, index) => (
+            <>
+              {index > 0 && ', '}
+              <a href={link.href}>{link.label}</a>
+            </>
+          ))
+        }
+        .
+      </p>
+    </div>
+    <div class="lx__text-family" data-lx-text-workflow>
+      <p class="lx__title">Composed workflow: {workflow.title}</p>
+      <p class="lx__summary">{workflow.textSummary}</p>
+      <p data-lx-text-proposal>
+        <strong>{workflow.proposal.label}.</strong> {workflow.proposal.text}
+      </p>
+      <ul class="lx__text-objects">
+        {
+          workflow.marks.map((mark) => (
+            <li data-lx-text-mark={mark.id}>
+              <strong>{mark.label}.</strong> {mark.text}
+            </li>
+          ))
+        }
+      </ul>
+      <div class="lx__text-path">
+        <p>
+          <strong>Before the first stage.</strong>
+        </p>
+        <ul class="lx__text-objects">
+          {
+            workflow.preconditions.map((precondition) => (
+              <li data-lx-text-precondition={precondition.id}>
+                <strong>{precondition.title}.</strong> {precondition.text} Objects:{' '}
+                {precondition.objects.map((id, index) => (
+                  <>
+                    {index > 0 && ', '}
+                    <a href={textHref(id)}>{nodeById.get(id).label}</a>
+                  </>
+                ))}
+                . Read more:{' '}
+                {precondition.links.map((link, index) => (
+                  <>
+                    {index > 0 && ', '}
+                    <a href={link.href}>{link.label}</a>
+                  </>
+                ))}
+                .
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+      <ol class="lx__text-stages">
+        {
+          workflow.stages.map((stage, index) => (
+            <li id={textId(stage.id)} data-lx-text-wstage={stage.id}>
+              <p>
+                <strong>{stage.title}.</strong> {stageFamily(stage.family)}. {stage.goal}
+              </p>
+              <p>You: {stage.person}</p>
+              {stage.inspect.map((step) =>
+                step.command ? (
+                  <p>
+                    <code>{step.command}</code>: {step.says}
+                  </p>
+                ) : (
+                  <p>
+                    {step.system} {step.says}
+                  </p>
+                ),
+              )}
+              <p data-lx-text-wpart="operator">
+                The operator, {markLabel.get('shipped').toLowerCase()}: {stage.operator}
+              </p>
+              {stage.decision && (
+                <p data-lx-text-wpart="decision">
+                  Decision: <a href={textHref(stage.decision)}>{decisionById.get(stage.decision).label}</a>.{' '}
+                  {stage.decisionText}
+                </p>
+              )}
+              <p data-lx-text-wpart="gate">
+                Moves on when, {markLabel.get('proposed').toLowerCase()}: {stage.gate}
+              </p>
+              <p>Done when: {stage.done}</p>
+              {stage.limits && <p>What it does not prove: {stage.limits}</p>}
+              <p>What can stop it:</p>
+              <ul>
+                {stage.outcomes.map((one) => (
+                  <li data-lx-text-wstop={one.outcome}>
+                    <strong>{outcomeById.get(one.outcome).label}.</strong> {one.text} Clears it: {one.recovery}{' '}
+                    {heldAfter(index) ? `Held until it is cleared: ${heldAfter(index)}.` : 'No stage follows it.'}
+                    {one.journey && (
+                      <>
+                        {' '}
+                        The change journey walks it as{' '}
+                        <a href={textHref(one.journey.path)}>{pathOf(one.journey).label}</a>.
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p>
+                Objects:{' '}
+                {stage.objects.map((id, at) => (
+                  <>
+                    {at > 0 && ', '}
+                    <a href={textHref(id)}>{nodeById.get(id).label}</a>
+                  </>
+                ))}
+                .
+              </p>
+              <p>
+                Read more:{' '}
+                {stage.links.map((link, at) => (
+                  <>
+                    {at > 0 && ', '}
+                    <a href={link.href}>{link.label}</a>
+                  </>
+                ))}
+                .
+              </p>
+            </li>
+          ))
+        }
+      </ol>
+      <div class="lx__text-path">
+        <p>
+          <strong>What can stop a stage.</strong>
+        </p>
+        <ul class="lx__text-objects">
+          {
+            workflow.outcomes.map((outcome) => (
+              <li data-lx-text-woutcome={outcome.id}>
+                <strong>{outcome.label}.</strong> {outcome.text}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+      <div class="lx__text-path">
+        <p>
+          <strong>What each decision covers.</strong>
+        </p>
+        <ul class="lx__text-objects">
+          {
+            workflow.decisions.map((decision) => (
+              <li id={textId(decision.id)} data-lx-text-decision={decision.id}>
+                <strong>{decision.label}.</strong> Covers: {decision.covers} Does not cover: {decision.notCovered}
+                {decision.node && (
+                  <>
+                    {' '}
+                    In the object map: <a href={textHref(decision.node)}>{nodeById.get(decision.node).label}</a>.
+                  </>
+                )}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+      <div class="lx__text-path">
+        <p>
+          <strong>The record a pipeline can keep.</strong> {workflow.recordText}
+        </p>
+        <ul class="lx__text-objects">
+          {
+            workflow.record.map((field) => (
+              <li data-lx-text-record={field.id}>
+                <strong>{field.label}.</strong> {field.text}
+              </li>
+            ))
+          }
+        </ul>
+        {
+          workflow.readers.map((reader) => (
+            <p>
+              <code>{reader.command}</code>: {reader.says}
+            </p>
+          ))
+        }
+      </div>
+      {
+        workflow.distinctions.map((distinction) => (
+          <p>{distinction}</p>
+        ))
+      }
+      <p class="lx__later">
+        Read more:{' '}
+        {
+          workflow.links.map((link, index) => (
             <>
               {index > 0 && ', '}
               <a href={link.href}>{link.label}</a>
@@ -1613,15 +2183,16 @@ const objectMapModel = {
     border-top: 3px solid var(--ptah-amber);
   }
 
-  .lx__link-button {
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--sl-color-text-accent);
-    font: inherit;
-    text-decoration: underline;
-    text-underline-offset: 0.15em;
-    cursor: pointer;
+  /* A chip that is a link still reads as a chip. */
+  .lx a.lx__chip {
+    display: inline-block;
+    color: var(--sl-color-text);
+    text-decoration: none;
+  }
+
+  .lx a.lx__chip[aria-current='true'] {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent);
   }
 
   .lx__text-stages,
@@ -1893,6 +2464,94 @@ const objectMapModel = {
     gap: 0.25rem 0.75rem;
   }
 
+  .lx__mark {
+    padding: 0 0.4rem;
+    border: 1px solid var(--ptah-green);
+    border-radius: 2px;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .lx__mark[data-mark='proposed'] {
+    border-style: dashed;
+    border-color: var(--ptah-amber);
+  }
+
+  .lx__proposal {
+    padding: 0.5rem 0.625rem;
+    border: 1px dashed var(--ptah-amber);
+    background: var(--sl-color-bg);
+  }
+
+  .lx__marks {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0;
+    list-style: none;
+    color: var(--sl-color-gray-2);
+  }
+
+  .lx__marks li {
+    margin: 0 !important;
+  }
+
+  .lx__wsteps {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .lx__wsteps .lx__step-t {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .lx__step-mark {
+    color: var(--sl-color-gray-2);
+    font-weight: 600;
+  }
+
+  .lx__step-mark:empty {
+    display: none;
+  }
+
+  .lx__step[data-state='held'] {
+    border-style: dashed;
+    color: var(--sl-color-gray-3);
+  }
+
+  .lx__step[data-state='stopped'] {
+    border-color: var(--ptah-amber);
+    background: var(--sl-color-bg);
+  }
+
+  .lx__step[data-state='stopped'] .lx__step-n {
+    border-width: 2px;
+    border-color: var(--ptah-amber);
+    background: none;
+    color: inherit;
+  }
+
+  .lx__step[data-state='done'] .lx__step-n {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent);
+  }
+
+  .lx__wstatus {
+    padding: 0.4rem 0.625rem;
+    border-left: 3px solid var(--ptah-amber);
+  }
+
+  .lx__wstop {
+    padding: 0.5rem 0.625rem;
+    border-left: 3px solid var(--ptah-amber);
+    background: var(--sl-color-bg);
+  }
+
+  .lx__wstop > * + * {
+    margin-top: 0.375rem;
+  }
+
   /* Once the script runs, the interactive view replaces the text. */
   .lx[data-lx-ready] .lx__text {
     display: none;
@@ -1903,7 +2562,8 @@ const objectMapModel = {
       justify-content: center;
       padding: 0.4rem 0.2rem;
     }
-    .lx__step-t {
+    .lx__step-t,
+    .lx__wsteps .lx__step-t {
       display: none;
     }
     .lx__actor {
@@ -2013,6 +2673,18 @@ const objectMapModel = {
     state: () => { node: string | null };
     render: (write?: boolean) => void;
   };
+  type WorkflowModel = {
+    stages: { id: string; outcomes: string[] }[];
+    outcomes: Record<string, string>;
+  };
+  type Workflow = {
+    view: HTMLElement;
+    hasStage: (stage: string) => boolean;
+    reset: () => void;
+    restore: (params: URLSearchParams) => void;
+    state: () => { step: string | null; outcome: string | null };
+    render: (write?: boolean) => void;
+  };
 
   const FAMILY_PARAM = 'lx-family';
   const STAGE_PARAM = 'lx-stage';
@@ -2022,12 +2694,26 @@ const objectMapModel = {
   const LOSS_PARAM = 'lx-loss';
   const SOURCE_PARAM = 'lx-source';
   const NODE_PARAM = 'lx-node';
+  const STEP_PARAM = 'lx-step';
+  const OUTCOME_PARAM = 'lx-outcome';
   const JOURNEY = 'journey';
   const AUDIT = 'audit';
   const OBJECTS = 'objects';
+  const WORKFLOW = 'workflow';
   const JOURNEY_PARAMS = [FAMILY_PARAM, PATH_PARAM, STAGE_PARAM, OBJECT_PARAM];
   const AUDIT_PARAMS = [LOSS_PARAM, SOURCE_PARAM];
   const OBJECT_MAP_PARAMS = [NODE_PARAM];
+  const WORKFLOW_PARAMS = [STEP_PARAM, OUTCOME_PARAM];
+
+  // A link is followed in place on a plain click with the main button, and
+  // the page is not loaded again. A click with a modifier or another button
+  // is the browser's: a new tab or window opens the address the link names.
+  const inPlace = (event: MouseEvent, element: Element) => {
+    if (!(element instanceof HTMLAnchorElement)) return true;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+    event.preventDefault();
+    return true;
+  };
 
   const reveal = (element: HTMLElement) => {
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2227,7 +2913,7 @@ const objectMapModel = {
     view.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
       const chip = target.closest<HTMLElement>('[data-lx-select]');
-      if (chip) select(chip.dataset.lxSelect!, true);
+      if (chip && inPlace(event, chip)) select(chip.dataset.lxSelect!, true);
       // A turn goes on along the current path when that path takes it, and
       // switches to the path that does otherwise. Focus moves to the stage it
       // reached, since the panel that held the choice is now hidden.
@@ -2289,7 +2975,7 @@ const objectMapModel = {
     const lossButtons = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-loss]')];
     const summaries = [...view.querySelectorAll<HTMLElement>('[data-lx-loss-summary]')];
     const nodes = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-source]')];
-    const chips = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-source-select]')];
+    const chips = [...view.querySelectorAll<HTMLAnchorElement>('[data-lx-source-select]')];
     const panels = new Map(
       [...view.querySelectorAll<HTMLElement>('[data-lx-source-panel]')].map((panel) => [panel.dataset.lxSourcePanel!, panel]),
     );
@@ -2319,7 +3005,10 @@ const objectMapModel = {
         }
       }
       if (hint) hint.hidden = selected !== null;
-      for (const chip of chips) chip.setAttribute('aria-pressed', String(chip.dataset.lxSourceSelect === selected));
+      for (const chip of chips) {
+        if (chip.dataset.lxSourceSelect === selected) chip.setAttribute('aria-current', 'true');
+        else chip.removeAttribute('aria-current');
+      }
       if (write) changed();
     };
 
@@ -2343,7 +3032,11 @@ const objectMapModel = {
       });
     }
     // An identity's sources open the source's panel, which can be far below.
-    for (const chip of chips) chip.addEventListener('click', () => select(chip.dataset.lxSourceSelect!, true));
+    for (const chip of chips) {
+      chip.addEventListener('click', (event) => {
+        if (inPlace(event, chip)) select(chip.dataset.lxSourceSelect!, true);
+      });
+    }
 
     const reset = () => {
       loss = null;
@@ -2432,7 +3125,7 @@ const objectMapModel = {
     // this one.
     view.addEventListener('click', (event) => {
       const link = (event.target as HTMLElement).closest<HTMLElement>('[data-lx-node-select]');
-      if (link) select(link.dataset.lxNodeSelect!, true);
+      if (link && inPlace(event, link)) select(link.dataset.lxNodeSelect!, true);
     });
 
     const reset = () => {
@@ -2455,6 +3148,127 @@ const objectMapModel = {
     };
   }
 
+  // The composed workflow: the stage a reader is at and what stopped it, if
+  // anything. The stages before it read as done; a stop marks every stage
+  // after it held. Another stage chosen clears the stop, so a stop chosen at
+  // one stage never reads as the state of another.
+  function workflowView(view: HTMLElement, changed: () => void): Workflow | null {
+    const model: WorkflowModel = JSON.parse(view.dataset.lxWorkflowModel || '{}');
+    if (!model.stages?.length || !model.outcomes) return null;
+
+    const ids = model.stages.map((stage) => stage.id);
+    const steps = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-wstep]')];
+    const titles = steps.map((step) => step.querySelector('[data-lx-wtitle]')?.textContent?.trim() ?? '');
+    const panels = new Map(
+      [...view.querySelectorAll<HTMLElement>('[data-lx-wstage-panel]')].map((panel) => [panel.dataset.lxWstagePanel!, panel]),
+    );
+    const count = view.querySelector<HTMLElement>('[data-lx-wcount]');
+    const status = view.querySelector<HTMLElement>('[data-lx-wstatus]');
+    const prev = view.querySelector<HTMLButtonElement>('[data-lx-wprev]');
+    const next = view.querySelector<HTMLButtonElement>('[data-lx-wnext]');
+
+    let index = 0;
+    let outcome: string | null = null;
+
+    const stops = (at: number, id: string) => model.stages[at]?.outcomes.includes(id) ?? false;
+
+    const render = (write = true) => {
+      const stopped = outcome !== null;
+      const stop = stopped ? model.outcomes[outcome!] : '';
+      steps.forEach((step, at) => {
+        const current = at === index;
+        if (current) step.setAttribute('aria-current', 'step');
+        else step.removeAttribute('aria-current');
+        step.tabIndex = current ? 0 : -1;
+        const state = at < index ? 'done' : current ? (stopped ? 'stopped' : 'current') : stopped ? 'held' : 'ahead';
+        step.dataset.state = state;
+        const mark = { done: 'Done', current: '', stopped: `Stopped: ${stop}`, held: 'Held', ahead: '' }[state];
+        const badge = step.querySelector<HTMLElement>('[data-lx-wmark]');
+        if (badge) badge.textContent = mark;
+        step.setAttribute('aria-label', `Stage ${at + 1}: ${titles[at]}${mark ? `. ${mark}` : ''}`);
+      });
+      for (const [id, panel] of panels) {
+        const shown = id === ids[index];
+        panel.hidden = !shown;
+        for (const option of panel.querySelectorAll<HTMLElement>('[data-lx-woutcome]')) {
+          option.setAttribute('aria-pressed', String(shown && option.dataset.lxWoutcome === outcome));
+        }
+        for (const detail of panel.querySelectorAll<HTMLElement>('[data-lx-wstop]')) {
+          detail.hidden = !(shown && detail.dataset.lxWstop === outcome);
+        }
+      }
+      if (count) count.textContent = `Stage ${index + 1} of ${ids.length}: ${titles[index]}`;
+      if (status) {
+        const later = titles.slice(index + 1);
+        status.hidden = !stopped;
+        status.textContent = stopped
+          ? `Stopped at ${titles[index]}: ${stop}. ${later.length > 0 ? `Held: ${later.join(', ')}.` : 'No stage follows it.'}`
+          : '';
+      }
+      if (prev) prev.disabled = index === 0;
+      if (next) next.disabled = index === ids.length - 1;
+      if (write) changed();
+    };
+
+    const goTo = (at: number, focus = false) => {
+      const target = Math.max(0, Math.min(ids.length - 1, at));
+      if (target !== index) outcome = null;
+      index = target;
+      render();
+      if (focus) steps[index]?.focus();
+    };
+
+    for (const step of steps) {
+      step.addEventListener('click', () => goTo(steps.indexOf(step)));
+      step.addEventListener('keydown', (event) => {
+        const moves: Record<string, number> = {
+          ArrowRight: index + 1,
+          ArrowDown: index + 1,
+          ArrowLeft: index - 1,
+          ArrowUp: index - 1,
+          Home: 0,
+          End: ids.length - 1,
+        };
+        if (!(event.key in moves)) return;
+        event.preventDefault();
+        goTo(moves[event.key], true);
+      });
+    }
+    prev?.addEventListener('click', () => goTo(index - 1));
+    next?.addEventListener('click', () => goTo(index + 1));
+    // Choosing the stop that is shown again clears it.
+    view.addEventListener('click', (event) => {
+      const option = (event.target as HTMLElement).closest<HTMLElement>('[data-lx-woutcome]');
+      if (!option) return;
+      const id = option.dataset.lxWoutcome!;
+      outcome = outcome === id ? null : stops(index, id) ? id : null;
+      render();
+    });
+
+    const reset = () => {
+      index = 0;
+      outcome = null;
+    };
+
+    return {
+      view,
+      hasStage: (id) => ids.includes(id),
+      reset,
+      // A link restores the stage it names, the first without one, and the
+      // stop it names when that stop can happen at that stage. Any other
+      // value is ignored.
+      restore: (params) => {
+        reset();
+        const wanted = ids.indexOf(params.get(STEP_PARAM) ?? '');
+        if (wanted >= 0) index = wanted;
+        const stop = params.get(OUTCOME_PARAM);
+        if (stop && stops(index, stop)) outcome = stop;
+      },
+      state: () => ({ step: index === 0 ? null : ids[index], outcome }),
+      render,
+    };
+  }
+
   function start(root: HTMLElement) {
     const app = root.querySelector<HTMLElement>('[data-lx-app]');
     const familyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-family]')];
@@ -2464,6 +3278,7 @@ const objectMapModel = {
     let current: Family | undefined;
     let audit: Audit | null = null;
     let objects: ObjectMap | null = null;
+    let workflow: Workflow | null = null;
     let viewId = JOURNEY;
 
     // The default view, family and path write no parameter, so a link from
@@ -2483,16 +3298,22 @@ const objectMapModel = {
         };
         if (viewId === AUDIT && audit) {
           const state = audit.state();
-          drop([...JOURNEY_PARAMS, ...OBJECT_MAP_PARAMS]);
+          drop([...JOURNEY_PARAMS, ...OBJECT_MAP_PARAMS, ...WORKFLOW_PARAMS]);
           url.searchParams.set(VIEW_PARAM, AUDIT);
           put(LOSS_PARAM, state.loss);
           put(SOURCE_PARAM, state.source);
         } else if (viewId === OBJECTS && objects) {
-          drop([...JOURNEY_PARAMS, ...AUDIT_PARAMS]);
+          drop([...JOURNEY_PARAMS, ...AUDIT_PARAMS, ...WORKFLOW_PARAMS]);
           url.searchParams.set(VIEW_PARAM, OBJECTS);
           put(NODE_PARAM, objects.state().node);
+        } else if (viewId === WORKFLOW && workflow) {
+          const state = workflow.state();
+          drop([...JOURNEY_PARAMS, ...AUDIT_PARAMS, ...OBJECT_MAP_PARAMS]);
+          url.searchParams.set(VIEW_PARAM, WORKFLOW);
+          put(STEP_PARAM, state.step);
+          put(OUTCOME_PARAM, state.outcome);
         } else {
-          drop([VIEW_PARAM, ...AUDIT_PARAMS, ...OBJECT_MAP_PARAMS]);
+          drop([VIEW_PARAM, ...AUDIT_PARAMS, ...OBJECT_MAP_PARAMS, ...WORKFLOW_PARAMS]);
           const state = current.state();
           put(FAMILY_PARAM, current.id === defaultFamily ? null : current.id);
           put(PATH_PARAM, state.path);
@@ -2512,14 +3333,21 @@ const objectMapModel = {
     audit = auditElement ? auditView(auditElement, writeUrl) : null;
     const objectsElement = root.querySelector<HTMLElement>('[data-lx-objects]');
     objects = objectsElement ? objectsView(objectsElement, writeUrl) : null;
+    const workflowElement = root.querySelector<HTMLElement>('[data-lx-workflow]');
+    workflow = workflowElement ? workflowView(workflowElement, writeUrl) : null;
     if (!app || all.length === 0) return;
     const home = all.find((one) => one.id === defaultFamily) ?? all[0];
-    const available = (id: string) => id === JOURNEY || (id === AUDIT && audit !== null) || (id === OBJECTS && objects !== null);
+    const available = (id: string) =>
+      id === JOURNEY ||
+      (id === AUDIT && audit !== null) ||
+      (id === OBJECTS && objects !== null) ||
+      (id === WORKFLOW && workflow !== null);
 
     const show = () => {
       if (journey) journey.hidden = viewId !== JOURNEY;
       if (audit) audit.view.hidden = viewId !== AUDIT;
       if (objects) objects.view.hidden = viewId !== OBJECTS;
+      if (workflow) workflow.view.hidden = viewId !== WORKFLOW;
       for (const button of viewButtons) button.setAttribute('aria-pressed', String(button.dataset.lxView === viewId));
       for (const one of all) one.view.hidden = one !== current;
       for (const button of familyButtons) {
@@ -2533,6 +3361,7 @@ const objectMapModel = {
       current!.render(false);
       audit?.render(false);
       objects?.render(false);
+      workflow?.render(false);
       if (write) writeUrl();
     };
 
@@ -2549,50 +3378,82 @@ const objectMapModel = {
     };
     for (const button of familyButtons) button.addEventListener('click', () => chooseFamily(button.dataset.lxFamily!));
 
-    // A view starts afresh when it is chosen: the audit view with no loss and
-    // no source, the object map with no object, the change journey in the
-    // default family at its default path and first stage with nothing
-    // selected.
-    const chooseView = (id: string) => {
-      if (id === viewId || !available(id)) return;
-      viewId = id;
+    // Every view back at its start: the change journey in the default family
+    // at its default path and first stage with nothing selected, the audit
+    // view with no loss and no source, the object map with no object, and
+    // the workflow at its first stage with nothing stopped.
+    const resetAll = () => {
       current = home;
       current.reset();
       audit?.reset();
       objects?.reset();
+      workflow?.reset();
+    };
+
+    // A view starts afresh when it is chosen.
+    const chooseView = (id: string) => {
+      if (id === viewId || !available(id)) return;
+      viewId = id;
+      resetAll();
       show();
       renderAll(true);
     };
     for (const button of viewButtons) button.addEventListener('click', () => chooseView(button.dataset.lxView!));
 
-    // A link opens the view lx-view names. Without one, it opens the audit
-    // view when it names a source or a loss of it, the object map when it
-    // names an object of it, and otherwise the family it names, or else the
-    // one its stage, its path or its object belongs to, in that order.
-    const params = new URLSearchParams(location.search);
-    const named = (param: string, has: (one: Family, value: string) => boolean) => {
-      const value = params.get(param);
-      return value ? all.find((one) => has(one, value)) : undefined;
+    // An address opens the view lx-view names. Without one, it opens the
+    // audit view when it names a source or a loss of it, the object map when
+    // it names an object of it, the workflow when it names a stage of it, and
+    // otherwise the family it names, or else the one its stage, its path or
+    // its object belongs to, in that order. Whatever it does not name starts
+    // afresh.
+    const open = (params: URLSearchParams) => {
+      const named = (param: string, has: (one: Family, value: string) => boolean) => {
+        const value = params.get(param);
+        return value ? all.find((one) => has(one, value)) : undefined;
+      };
+      const asked = params.get(VIEW_PARAM) ?? '';
+      resetAll();
+      if ((asked === AUDIT || asked === OBJECTS || asked === WORKFLOW) && available(asked)) viewId = asked;
+      else if (audit && (audit.hasSource(params.get(SOURCE_PARAM) ?? '') || audit.hasLoss(params.get(LOSS_PARAM) ?? '')))
+        viewId = AUDIT;
+      else if (objects && objects.hasNode(params.get(NODE_PARAM) ?? '')) viewId = OBJECTS;
+      else if (workflow && workflow.hasStage(params.get(STEP_PARAM) ?? '')) viewId = WORKFLOW;
+      else viewId = JOURNEY;
+      if (viewId === JOURNEY) {
+        current =
+          named(FAMILY_PARAM, (one, value) => one.id === value) ??
+          named(STAGE_PARAM, (one, value) => one.owns(value)) ??
+          named(PATH_PARAM, (one, value) => one.hasPath(value)) ??
+          named(OBJECT_PARAM, (one, value) => one.hasObject(value)) ??
+          home;
+        current.restore(params);
+      } else if (viewId === AUDIT) audit!.restore(params);
+      else if (viewId === OBJECTS) objects!.restore(params);
+      else workflow!.restore(params);
     };
-    const asked = params.get(VIEW_PARAM) ?? '';
-    if ((asked === AUDIT || asked === OBJECTS) && available(asked)) viewId = asked;
-    else if (audit && (audit.hasSource(params.get(SOURCE_PARAM) ?? '') || audit.hasLoss(params.get(LOSS_PARAM) ?? ''))) viewId = AUDIT;
-    else if (objects && objects.hasNode(params.get(NODE_PARAM) ?? '')) viewId = OBJECTS;
-    if (viewId === JOURNEY) {
-      current =
-        named(FAMILY_PARAM, (one, value) => one.id === value) ??
-        named(STAGE_PARAM, (one, value) => one.owns(value)) ??
-        named(PATH_PARAM, (one, value) => one.hasPath(value)) ??
-        named(OBJECT_PARAM, (one, value) => one.hasObject(value)) ??
-        home;
-      current.restore(params);
-    } else {
-      current = home;
-      current.reset();
-      if (viewId === AUDIT) audit!.restore(params);
-      else objects!.restore(params);
-    }
 
+    // What a link into another view brings into sight: the panel it opened,
+    // or else the stages of the view.
+    const landing = () => {
+      const view =
+        viewId === AUDIT ? audit!.view : viewId === OBJECTS ? objects!.view : viewId === WORKFLOW ? workflow!.view : current!.view;
+      const panels = '[data-lx-object-panel], [data-lx-source-panel], [data-lx-node-panel]';
+      const panel = [...view.querySelectorAll<HTMLElement>(panels)].find((one) => !one.hidden);
+      return panel ?? view.querySelector<HTMLElement>('[data-lx-steps]:not([hidden]), [data-lx-wsteps]') ?? view;
+    };
+
+    // A link into another view is followed in place: the view opens as the
+    // address names it, and that address is written.
+    root.addEventListener('click', (event) => {
+      const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-lx-open]');
+      if (!link || !app.contains(link) || !inPlace(event, link)) return;
+      open(new URL(link.href).searchParams);
+      show();
+      renderAll(true);
+      reveal(landing());
+    });
+
+    open(new URLSearchParams(location.search));
     app.hidden = false;
     root.dataset.lxReady = '';
     show();
