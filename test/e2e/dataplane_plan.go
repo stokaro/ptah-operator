@@ -291,6 +291,68 @@ func planStatusBound(schema *ptahv1alpha1.PtahSchema, reference, digest string, 
 	return nil
 }
 
+// mysqlKeyPartExpression is what a query reads for a key part's expression in
+// information_schema.statistics on the server the driver started for engine
+// mysql. MySQL 8.0.13 added the EXPRESSION column for a functional key part.
+// MariaDB has no functional key parts and no such column, so a query naming it
+// fails there; NULL is what MySQL reads for every key part that is a column.
+func mysqlKeyPartExpression(server string) string {
+	if server == "mariadb" {
+		return "NULL"
+	}
+	return "expression"
+}
+
+// mysqlExactIndexQuery counts the exact single-column index on e2e_widgets.name
+// of the uniqueness given, on the server named.
+func mysqlExactIndexQuery(server, index string, nonUnique int) string {
+	return fmt.Sprintf("SELECT count(*) FROM (SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() "+
+		"AND table_name='e2e_widgets' AND index_name='%s' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=%d "+
+		"AND column_name='name' AND seq_in_index=1 AND %s IS NULL AND sub_part IS NULL)=1) AS exact_index",
+		index, nonUnique, mysqlKeyPartExpression(server))
+}
+
+// mysqlFingerprintSQL reads every column and index of the current database but
+// Ptah's schema apply log, on the server named.
+func mysqlFingerprintSQL(server string) string {
+	return `
+    SELECT SHA2(COALESCE(GROUP_CONCAT(entry ORDER BY entry SEPARATOR '\n'), ''), 256)
+    FROM (
+      SELECT CONCAT(
+        'column:', table_name, ':', LPAD(ordinal_position, 6, '0'), ':', column_name, ':',
+        column_type, ':', is_nullable, ':', COALESCE(column_default, '<NULL>'), ':',
+        extra, ':', COALESCE(collation_name, '<NULL>'), ':', COALESCE(generation_expression, '<NULL>')) AS entry
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
+      UNION ALL
+      SELECT CONCAT(
+        'index:', table_name, ':', index_name, ':', LPAD(seq_in_index, 6, '0'), ':',
+        non_unique, ':', COALESCE(column_name, '<NULL>'), ':', COALESCE(sub_part, 0), ':',
+        index_type, ':', COALESCE(collation, '<NULL>'), ':', COALESCE(` + mysqlKeyPartExpression(server) + `, '<NULL>')) AS entry
+      FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
+    ) AS managed_schema`
+}
+
+// planDialect is the dialect Ptah writes a plan and an Observe report in for a
+// database of engine on server, the server the driver started for engine mysql.
+// Ptah names the server it reached, so a MariaDB server's plans and reports
+// say mariadb where a MySQL server's say mysql. An artifact is pushed as mysql
+// for either, so this is not the push dialect.
+func planDialect(engine, server string) (string, error) {
+	switch engine {
+	case "postgresql":
+		return "postgres", nil
+	case "mysql":
+		if server == "mysql" || server == "mariadb" {
+			return server, nil
+		}
+		return "", fmt.Errorf("engine mysql has no server %q", server)
+	default:
+		return "", fmt.Errorf("no engine %q", engine)
+	}
+}
+
 // committedPlan holds a published plan to the contract it was published
 // under: the schema, the artifact and dialect it plans, the execution binding
 // and manager behind it, a fingerprint of the state it plans from, its
@@ -328,7 +390,8 @@ func conditionStatus(conditions []metav1.Condition, kind string, status metav1.C
 var driftSeverities = []string{"safe", "info", "warning", "error", "destructive"}
 
 // observedDriftBound holds a changed schema's Observe result to the drift
-// evidence the schema persisted from it.
+// evidence the schema persisted from it, and to the dialect planDialect names
+// for the server it read.
 func observedDriftBound(result runner.Result, target ptahv1alpha1.TargetStatus, dialect string) error {
 	switch {
 	case result.Error != nil || result.Stdout != "" || (result.ChildExitCode != 0 && result.ChildExitCode != 1):
@@ -344,8 +407,8 @@ func observedDriftBound(result runner.Result, target ptahv1alpha1.TargetStatus, 
 		if result.ObservedDialect != "postgres" && result.ObservedDialect != "postgresql" {
 			return fmt.Errorf("the Observe result read dialect %q", result.ObservedDialect)
 		}
-	case "mysql":
-		if result.ObservedDialect != "mysql" && result.ObservedDialect != "mariadb" {
+	case "mysql", "mariadb":
+		if result.ObservedDialect != dialect {
 			return fmt.Errorf("the Observe result read dialect %q", result.ObservedDialect)
 		}
 	default:

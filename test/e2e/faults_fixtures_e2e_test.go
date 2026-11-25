@@ -45,7 +45,7 @@ func (f *faultRun) psqlWith(ctx context.Context, database, query string) (string
 // mysqlRootWith runs one query in a database of the MySQL server as root.
 func (f *faultRun) mysqlRootWith(ctx context.Context, database, query string) (string, error) {
 	return f.execInWith(ctx, mysqlService, "sh", "-ec",
-		`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
+		`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
 		"sh", database, query)
 }
 
@@ -198,7 +198,7 @@ func (f *faultRun) createDatabase(engine, database, secret string) {
 		seed, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", "mysql-v3.sql"))
 		f.check(err, "read the MySQL seed")
 		f.check(f.execInWithInput(mysqlService, seed, "sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot "$1"`,
 			"sh", database), "could not seed MySQL database %s", database)
 	default:
 		f.fatalf("unsupported database engine %s", engine)
@@ -255,7 +255,7 @@ func (f *faultRun) createDocumentedDatabase(engine, database, secret string) str
 		seed, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", "mysql-v3.sql"))
 		f.check(err, "read the MySQL seed")
 		f.check(f.execInWithInput(mysqlService, seed, "sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot "$1"`,
 			"sh", database), "could not seed MySQL database %s", database)
 		return ""
 	default:
@@ -289,26 +289,10 @@ func (f *faultRun) pgFingerprint(database string) string {
 // and then stopped has created it: measured on MySQL 8.4 with the v0.28.0
 // image, killed while its ALTER waited for the metadata lock. Ptah's own reads
 // leave the table out, and it holds no part of the declared schema these
-// proofs compare.
+// proofs compare. The query is mysqlFingerprintSQL for the server.
 func (f *faultRun) mysqlFingerprint(database string) string {
 	f.t.Helper()
-	return f.query("mysql", database, `
-    SELECT SHA2(COALESCE(GROUP_CONCAT(entry ORDER BY entry SEPARATOR '\n'), ''), 256)
-    FROM (
-      SELECT CONCAT(
-        'column:', table_name, ':', LPAD(ordinal_position, 6, '0'), ':', column_name, ':',
-        column_type, ':', is_nullable, ':', COALESCE(column_default, '<NULL>'), ':',
-        extra, ':', COALESCE(collation_name, '<NULL>'), ':', COALESCE(generation_expression, '<NULL>')) AS entry
-      FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
-      UNION ALL
-      SELECT CONCAT(
-        'index:', table_name, ':', index_name, ':', LPAD(seq_in_index, 6, '0'), ':',
-        non_unique, ':', COALESCE(column_name, '<NULL>'), ':', COALESCE(sub_part, 0), ':',
-        index_type, ':', COALESCE(collation, '<NULL>'), ':', COALESCE(expression, '<NULL>')) AS entry
-      FROM information_schema.statistics
-      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
-    ) AS managed_schema`)
+	return f.query("mysql", database, mysqlFingerprintSQL(f.in.MySQLServer))
 }
 
 // fingerprint is the engine's fingerprint, held to the engine's digest format.
@@ -386,7 +370,7 @@ func (f *faultRun) startMySQLBarrier(database, token string) {
 		"DO SLEEP(%d); UNLOCK TABLES; SELECT RELEASE_LOCK('%s'); SELECT RELEASE_LOCK('%s')",
 		guard, ready, faultBarrierSeconds, ready, guard)
 	session := f.startKubectl("-n", f.in.TestNamespace, "exec", "deployment/"+mysqlService, "--",
-		"sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
+		"sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
 		"sh", database, statement)
 	f.mysqlBarrier = &mysqlBarrier{session: session, ready: ready, database: database}
 	f.waitQueryEquals("mysql", "mysql", "SELECT IF(IS_USED_LOCK('"+ready+"') IS NULL, 0, 1)",

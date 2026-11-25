@@ -11,6 +11,12 @@ import (
 	"strings"
 )
 
+// mysqlClient is the client a shell in the MySQL server's container runs: the
+// one its image ships. MySQL's image ships mysql, and MariaDB's ships mariadb,
+// with no mysql since 11.0. Both read the password from MYSQL_PWD, and MariaDB's
+// image creates its accounts from the same MYSQL_ variables.
+const mysqlClient = `"$(command -v mysql || command -v mariadb)"`
+
 // These are disposable acceptance databases. Keep their raw SQL in the
 // database container, away from the published container logs and artifacts.
 func databaseAuditArgs(engine string) []any {

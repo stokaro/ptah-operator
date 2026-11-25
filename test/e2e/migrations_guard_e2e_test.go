@@ -401,16 +401,19 @@ func (m *migrationRun) createAdoptDatabases(a adoptRow) {
 // baseline replays the migrations into the shadow database, Ptah empties it,
 // and on MySQL it refuses to drop objects unless the user holds the global
 // SELECT, DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW_ROUTINE
-// and TRIGGER privileges. The Jobs' own user keeps its per-schema grants. The
-// password is the one the database container already holds, so no
-// credential crosses the exec.
+// and TRIGGER privileges. On MariaDB, whose image declares MARIADB_VERSION, it
+// asks for SHOW VIEW in place of the last two, and MariaDB has no SHOW_ROUTINE
+// to grant. The Jobs' own user keeps its per-schema grants. The password is
+// the one the database container already holds, so no credential crosses the
+// exec.
 func (m *migrationRun) createMySQLShadowUser(a adoptRow) {
 	m.t.Helper()
-	script := `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "
+	script := `privileges='SELECT, DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW_ROUTINE, TRIGGER'
+[ -z "${MARIADB_VERSION:-}" ] || privileges='SELECT, DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW VIEW'
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" ` + mysqlClient + ` --protocol=tcp -h 127.0.0.1 -uroot -e "
 			DROP USER IF EXISTS '$1'@'%';
 			CREATE USER '$1'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';
-			GRANT SELECT, DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW_ROUTINE, TRIGGER
-				ON *.* TO '$1'@'%';
+			GRANT $privileges ON *.* TO '$1'@'%';
 			GRANT ALL PRIVILEGES ON $2.* TO '$1'@'%';
 			FLUSH PRIVILEGES"`
 	if _, _, err := m.kubectl("-n", m.in.TestNamespace, "exec", "deployment/"+m.engine.service, "--",
@@ -439,7 +442,7 @@ func (m *migrationRun) buildAdoptSchemaWithoutTheOperator(a adoptRow) {
 			"sh", a.database, strings.TrimRight(string(content), "\n")}
 		if m.engine.name == "mysql" {
 			command = []string{"sh", "-ec",
-				`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -e "$2"`,
+				`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" ` + mysqlClient + ` --protocol=tcp -h 127.0.0.1 -uroot "$1" -e "$2"`,
 				"sh", a.database, strings.TrimRight(string(content), "\n")}
 		}
 		if _, _, err := m.kubectl(append([]string{"-n", m.in.TestNamespace, "exec", "deployment/" + m.engine.service, "--"}, command...)...); err != nil {

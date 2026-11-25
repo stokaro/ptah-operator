@@ -44,10 +44,10 @@ func (a *databaseSQLAudit) createMySQLAccountWith(database string, documented bo
 	}
 	a.exec("sh", "-ec", `credential=$(printf '%s' "$MYSQL_PASSWORD" | sed "s/'/''/g")
 printf "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\n%s;\n" "$1" "$credential" "$2" |
-MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, grant)
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, grant)
 	if documented {
 		held := strings.TrimSpace(string(a.exec("sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
 			"sh", documentedMySQLAccountQuery(user, database))))
 		if want := documentedMySQLAccountReading(); held != want {
 			a.t.Fatalf("MySQL account %s holds %s, and the documented account holds %s", user, held, want)
@@ -207,10 +207,7 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 	selected, err := w.inventory.diagnosticResult(resource, operation, f.observed.since(w.name, operation, before))
 	f.check(err, "select the successful schema SQL diagnostic result")
 	result := f.captureExactJobResult(w.name, operation, selected)
-	dialect := "postgres"
-	if w.audit.engine == "mysql" {
-		dialect = "mysql"
-	}
+	dialect := f.planDialect(w.audit.engine)
 	switch operation {
 	case "observe":
 		f.check(observedDriftBound(result, resource.Status.Target, dialect), "bind the SQL control to its observed state")

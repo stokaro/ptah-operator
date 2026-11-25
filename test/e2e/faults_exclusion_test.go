@@ -15,8 +15,15 @@ import (
 
 func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 	t.Parallel()
-	for _, engine := range []string{"postgresql", "mysql"} {
-		t.Run(engine, func(t *testing.T) {
+	// The MariaDB 12.3 capture of 2026-11-24 saved both plans with the MySQL
+	// statements byte for byte and the dialect mariadb.
+	for _, test := range []struct{ engine, dialect, other string }{
+		{"postgresql", "postgres", "mysql"},
+		{"mysql", "mysql", "mariadb"},
+		{"mysql", "mariadb", "mysql"},
+	} {
+		engine, dialect := test.engine, test.dialect
+		t.Run(dialect, func(t *testing.T) {
 			t.Parallel()
 			read := func(scope string) planDocument {
 				t.Helper()
@@ -28,10 +35,14 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 				if err := json.Unmarshal(raw, &plan); err != nil {
 					t.Fatal(err)
 				}
+				plan.Dialect = dialect
 				return plan
 			}
-			if err := excludedPolicyDocuments(read("wide"), read("narrow")); err != nil {
+			if err := excludedPolicyDocuments(read("wide"), read("narrow"), dialect); err != nil {
 				t.Fatalf("refused the actual executor plans: %v", err)
+			}
+			if excludedPolicyDocuments(read("wide"), read("narrow"), test.other) == nil {
+				t.Fatalf("accepted %s plans where the server plans in %s", dialect, test.other)
 			}
 			for name, edit := range map[string]func(*planDocument, *planDocument){
 				"comment only": func(o, _ *planDocument) {
@@ -57,7 +68,7 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 			} {
 				old, current := read("wide"), read("narrow")
 				edit(&old, &current)
-				if excludedPolicyDocuments(old, current) == nil {
+				if excludedPolicyDocuments(old, current, dialect) == nil {
 					t.Errorf("accepted %s", name)
 				}
 			}
@@ -66,7 +77,7 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 				for index := range old.Statements {
 					old.Statements[index].SQL = strings.ReplaceAll(old.Statements[index].SQL, from, "unrelated")
 				}
-				if excludedPolicyDocuments(old, current) == nil {
+				if excludedPolicyDocuments(old, current, dialect) == nil {
 					t.Errorf("accepted a plan that names %s nowhere", from)
 				}
 			}
@@ -76,11 +87,11 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 
 func TestExcludedPolicyDocumentsRemoveOnlyTheExcludedDrop(t *testing.T) {
 	t.Parallel()
-	for _, dialect := range []string{"postgres", "mysql"} {
+	for _, dialect := range []string{"postgres", "mysql", "mariadb"} {
 		t.Run(dialect, func(t *testing.T) {
 			t.Parallel()
 			add, drop := `ALTER TABLE "public"."e2e_widgets" ADD COLUMN "fault_token" text;`, `DROP TABLE "public"."e2e_excluded_policy_keep";`
-			if dialect == "mysql" {
+			if dialect != "postgres" {
 				add, drop = "ALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255) NULL;", "DROP TABLE IF EXISTS `e2e_excluded_policy_keep`;"
 			}
 			plans := func() (planDocument, planDocument) {
@@ -90,7 +101,7 @@ func TestExcludedPolicyDocumentsRemoveOnlyTheExcludedDrop(t *testing.T) {
 						Statements: []planStatement{{SQL: add}}}
 			}
 			old, current := plans()
-			if err := excludedPolicyDocuments(old, current); err != nil {
+			if err := excludedPolicyDocuments(old, current, dialect); err != nil {
 				t.Fatal(err)
 			}
 			for name, edit := range map[string]func(*planDocument, *planDocument){
@@ -111,17 +122,26 @@ func TestExcludedPolicyDocumentsRemoveOnlyTheExcludedDrop(t *testing.T) {
 					n.Statements[0].SQL += " DROP TABLE e2e_excluded_policy_keep;"
 					o.Statements[0] = n.Statements[0]
 				},
-				"missing dialect": func(o, n *planDocument) { o.Dialect, n.Dialect = "", "" },
-				"wrong format":    func(_, n *planDocument) { n.FormatVersion = 2 },
+				"missing dialect":                    func(o, n *planDocument) { o.Dialect, n.Dialect = "", "" },
+				"the original in another dialect":    func(o, _ *planDocument) { o.Dialect = otherDialect(dialect) },
+				"the narrowed in another dialect":    func(_, n *planDocument) { n.Dialect = otherDialect(dialect) },
+				"both in the other server's dialect": func(o, n *planDocument) { o.Dialect, n.Dialect = otherDialect(dialect), otherDialect(dialect) },
+				"wrong format":                       func(_, n *planDocument) { n.FormatVersion = 2 },
 			} {
 				old, current := plans()
 				edit(&old, &current)
-				if excludedPolicyDocuments(old, current) == nil {
+				if excludedPolicyDocuments(old, current, dialect) == nil {
 					t.Errorf("accepted %s", name)
 				}
 			}
 		})
 	}
+}
+
+// otherDialect is a dialect a plan for dialect must not be in: the other MySQL
+// server's, or MySQL's for PostgreSQL.
+func otherDialect(dialect string) string {
+	return map[string]string{"postgres": "mysql", "mysql": "mariadb", "mariadb": "mysql"}[dialect]
 }
 
 func TestExclusionEditNeedsANewPlanForTheSameResourceAndArtifact(t *testing.T) {

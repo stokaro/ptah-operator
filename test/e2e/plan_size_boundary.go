@@ -57,7 +57,11 @@ func (c planSizeCalibration) lengths(size int) (int, int, error) {
 	return (size - c.envelope) / c.repeatedWidth, (size - c.envelope) % c.repeatedWidth, nil
 }
 
-func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, dialect string, repeated, suffix int) error {
+// executablePlanAtLimit holds the 8 MiB plan to its 16 full chunks and to the
+// statements the fixture generated, in the dialect planDialect names. The
+// engine decides their shape: a MySQL or MariaDB server is sent a hundred
+// tables, PostgreSQL one.
+func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, engine, dialect string, repeated, suffix int) error {
 	if plan == nil || int64(len(document)) != plancontract.MaxExecutableBytes || plan.Spec.Size != plancontract.MaxExecutableBytes ||
 		len(plan.Spec.Chunks) != plancontract.MaxChunks || repeated <= 0 || suffix < 0 || suffix > 5 {
 		return errors.New("the operational plan did not reach the exact executable byte and chunk limits")
@@ -68,8 +72,9 @@ func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, d
 		}
 	}
 	parsed, err := parsePlanDocument(document)
+	mysql := engine == "mysql"
 	statements := 1
-	if dialect == "mysql" {
+	if mysql {
 		statements = 100
 	}
 	if err != nil || parsed.FormatVersion != 1 || parsed.Dialect != dialect || parsed.Destructive == nil || *parsed.Destructive ||
@@ -80,7 +85,7 @@ func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, d
 	for i := range statements {
 		name := "e2e_plan_size_limit"
 		count, ascii := repeated, suffix
-		if dialect == "mysql" {
+		if mysql {
 			name = fmt.Sprintf("e2e_plan_size_limit_%03d", i)
 			count, ascii = repeated/statements, 0
 			if i < repeated%statements {
@@ -98,7 +103,7 @@ func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, d
 		// is named in the schema the database placed it in
 		// (stokaro/ptah#6132).
 		opening := "CREATE TABLE `" + name + "` ("
-		if dialect != "mysql" {
+		if !mysql {
 			opening = `CREATE TABLE "public"."` + name + `" (`
 		}
 		matches := 0

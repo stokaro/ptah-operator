@@ -74,7 +74,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	}
 	sqlWindow := d.startSchemaRefusalWindow(schema, slug, database, secret)
 	d.createSchemaResource(resource)
-	d.assertPlan(schema, reference, digestV1, dialect, false, v1Observe, v1Plan, false)
+	d.assertPlan(schema, reference, digestV1, coordinationEngine, false, v1Observe, v1Plan, false)
 	initial := d.schema(schema)
 	controls := []operationSQLClient{
 		sqlWindow.resultControl(initial, "observe", v1Observe),
@@ -139,7 +139,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 		})
 	v2 := d.checkpointJobs(schema, "")
 	d.mustResumeStatusWrites("could not restore controller status-write RBAC")
-	v2After := d.assertPlan(schema, reference, digestV2, dialect, false, v2, v2, true)
+	v2After := d.assertPlan(schema, reference, digestV2, coordinationEngine, false, v2, v2, true)
 	second := d.schema(schema)
 	secondObserve := sqlWindow.resultControl(second, "observe", v2)
 	secondPlan := sqlWindow.resultControl(second, "plan", v2)
@@ -164,7 +164,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	}
 	d.patchSchema(schema, map[string]any{"spec": map[string]any{"interval": staleApprovalInterval}})
 	d.mustResumeStatusWrites("could not restore controller status-write RBAC")
-	v3After := d.assertPlan(schema, reference, digestV3, dialect, false, stale, stale, true)
+	v3After := d.assertPlan(schema, reference, digestV3, coordinationEngine, false, stale, stale, true)
 	third := d.schema(schema)
 	thirdObserve := sqlWindow.resultControl(third, "observe", stale)
 	thirdPlan := sqlWindow.resultControl(third, "plan", stale)
@@ -200,7 +200,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	}
 	destructiveApply := d.checkpointJobs(schema, "")
 	d.resumeSchemaAfterTagMove(schema)
-	v4After := d.assertPlan(schema, reference, digestV4, dialect, true, destructiveApply, destructiveApply, true)
+	v4After := d.assertPlan(schema, reference, digestV4, coordinationEngine, true, destructiveApply, destructiveApply, true)
 	if slug == "mysql" {
 		d.assertUnderclassifiedDropIndex()
 	}

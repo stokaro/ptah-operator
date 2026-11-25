@@ -186,6 +186,54 @@ func TestADatabaseCatalogThatClaimsTooMuchIsRefused(t *testing.T) {
 			}
 		})
 	}
+	// A MariaDB line runs under engine mysql and is told apart by its server,
+	// so the same release of MySQL is another line.
+	mariadbRow := func(server, engine, release string) string {
+		return `{"engine": "` + engine + `", "server": "` + server + `", "line": "` + release + `.x", "image": "mariadb:` + release + digest +
+			`", "imageCreated": "` + fixturePostgres18Date +
+			`", "state": "pending", "leftOut": [{"suite": "migrations-postgresql", "reason": "It runs PostgreSQL alone."}]}`
+	}
+	t.Run("a MariaDB line can be added beside the same MySQL release", func(t *testing.T) {
+		t.Parallel()
+		added := fixtureAddedRow + ", " + mariadbRow("mariadb", "mysql", "12.3") + ", " + mysqlRow("12.3.x", "mysql:12.3"+digest)
+		catalog, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, added), databaseCatalogNow)
+		if err != nil || len(catalog.Added) != 3 {
+			t.Fatalf("loadDatabaseCatalog() = %d added lines, %v, want both 12.3 lines read", len(catalog.Added), err)
+		}
+		if slug, name := catalog.Added[1].serverNames(); slug != "mariadb" || name != "MariaDB" {
+			t.Fatalf("the MariaDB line is named %q and %q", slug, name)
+		}
+		if slug, name := catalog.Added[2].serverNames(); slug != "mysql" || name != "MySQL" {
+			t.Fatalf("the MySQL line is named %q and %q", slug, name)
+		}
+	})
+	for name, test := range map[string]struct{ row, want string }{
+		"a MariaDB release twice": {
+			mariadbRow("mariadb", "mysql", "12.3") + ", " + mariadbRow("mariadb", "mysql", "12.3"), "mariadb 12.3 appears twice",
+		},
+		"a server the driver cannot start": {mariadbRow("percona", "mysql", "12.3"), `server "percona", which the driver cannot start`},
+		// The engine's own server is the line with no server named, so the
+		// same row has one spelling.
+		"the engine's own server named": {mariadbRow("mysql", "mysql", "12.3"), `server "mysql", which the driver cannot start`},
+		"a server under another engine": {mariadbRow("mariadb", "postgresql", "12"), "runs under engine mysql"},
+		"a server as an engine":         {strings.Replace(mariadbRow("mariadb", "mariadb", "12.3"), `"server": "mariadb", `, "", 1), "not one the support page names"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, fixtureAddedRow+", "+test.row), databaseCatalogNow)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("loadDatabaseCatalog() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	t.Run("a baseline line of another server", func(t *testing.T) {
+		t.Parallel()
+		_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureMySQLRow,
+			strings.Replace(fixtureMySQLRow, `"line"`, `"server": "mariadb", "line"`, 1)), databaseCatalogNow)
+		if err == nil || !strings.Contains(err.Error(), "a baseline line runs its engine's own server") {
+			t.Fatalf("loadDatabaseCatalog() error = %v, want the baseline held to MySQL's own server", err)
+		}
+	})
 	t.Run("a baseline MySQL tag that names another line", func(t *testing.T) {
 		t.Parallel()
 		_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, `"image": "`+fixtureMySQLImage+`"`, `"image": "mysql:9.7`+digest+`"`), databaseCatalogNow)
@@ -304,6 +352,33 @@ func TestTheDatabasePageIsHeldToTheCatalog(t *testing.T) {
 			t.Fatalf("a supported line in the table was refused: %v", err)
 		}
 	})
+
+	// A supported MariaDB line keeps MySQL, the engine a resource names, in
+	// the first column, and names the server before its release.
+	mariadb := loadFixtureDatabaseCatalog(t)
+	mariadbImage := "mariadb:12.3@sha256:" + strings.Repeat("e", 64)
+	mariadb.Added = append(mariadb.Added, addedDatabaseLine{
+		databaseLine: databaseLine{Engine: "mysql", Server: "mariadb", Line: "12.3.x", Image: mariadbImage},
+		ImageCreated: "2026-01-02", State: databaseLineSupported, EvidenceRun: "124",
+	})
+	for name, test := range map[string]struct {
+		row      string
+		accepted bool
+	}{
+		"the server before its release":        {"| MySQL | MariaDB 12.3.x | `" + mariadbImage + "` |\n", true},
+		"the server as the engine":             {"| MariaDB | 12.3.x | `" + mariadbImage + "` |\n", false},
+		"the release without its server":       {"| MySQL | 12.3.x | `" + mariadbImage + "` |\n", false},
+		"the server after its release":         {"| MySQL | 12.3.x MariaDB | `" + mariadbImage + "` |\n", false},
+		"the server's slug before its release": {"| MySQL | mariadb 12.3.x | `" + mariadbImage + "` |\n", false},
+	} {
+		t.Run("a supported MariaDB line with "+name, func(t *testing.T) {
+			t.Parallel()
+			err := verifyDatabasePage(mariadb, mutate(t, baselineRow, baselineRow+test.row))
+			if accepted := err == nil; accepted != test.accepted {
+				t.Fatalf("verifyDatabasePage() error = %v, want accepted %v", err, test.accepted)
+			}
+		})
+	}
 }
 
 // This reads the real catalog and the real driver, and whichever baseline they
@@ -500,6 +575,42 @@ func TestTheDatabaseLineMatrixIsEveryMinorAgainstEverySuiteItKeeps(t *testing.T)
 		t.Fatalf("the matrix holds %d MySQL jobs, want %d", mysqlJobs, want)
 	}
 
+	// A MariaDB line of the same release runs under engine mysql, hands the
+	// driver its server with its image, and takes names a MySQL line of that
+	// release cannot have.
+	mysql.Line, mysql.Image = "12.3.x", "mysql:12.3@sha256:"+strings.Repeat("d", 64)
+	mariadb := mysql
+	mariadb.Server, mariadb.Image = "mariadb", "mariadb:12.3@sha256:"+strings.Repeat("e", 64)
+	both.Added = []addedDatabaseLine{mysql, mariadb}
+	entries, err = databaseLineMatrix(minors, suites, both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mariadbJobs, taken := 0, map[string]bool{}
+	for _, entry := range entries {
+		name, artifact := "Kubernetes "+entry.Minor+" "+entry.Suite, entry.MinorSlug+"-"+entry.SuiteSlug
+		if taken[name] || taken[artifact] {
+			t.Fatalf("job %q takes a name or an artifact another job has", name)
+		}
+		taken[name], taken[artifact] = true, true
+		if entry.MySQLSourceImage != mariadb.Image {
+			if entry.MySQLServer != "" {
+				t.Fatalf("MySQL job %q names server %q", name, entry.MySQLServer)
+			}
+			continue
+		}
+		mariadbJobs++
+		if entry.MySQLServer != "mariadb" || entry.MySQLImageCreated != mariadb.ImageCreated {
+			t.Fatalf("job %q runs server %q built on %q, want mariadb on %s", name, entry.MySQLServer, entry.MySQLImageCreated, mariadb.ImageCreated)
+		}
+		if !strings.Contains(name, "on MariaDB 12.3 ") || !strings.HasSuffix(entry.MinorSlug, "-mariadb-12-3") {
+			t.Fatalf("job %q (%s) does not say which line it runs", name, entry.MinorSlug)
+		}
+	}
+	if want := len(minors) * (len(suites.Suites) - len(mariadb.LeftOut)); mariadbJobs != want {
+		t.Fatalf("the matrix holds %d MariaDB jobs, want %d", mariadbJobs, want)
+	}
+
 	empty := catalog
 	empty.Added = nil
 	if _, err := databaseLineMatrix(minors, suites, empty); err == nil || !strings.Contains(err.Error(), "no added line") {
@@ -512,7 +623,7 @@ func TestTheDatabaseLineMatrixIsEveryMinorAgainstEverySuiteItKeeps(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"postgres_source_image", "postgres_image_created", "mysql_source_image", "mysql_image_created"} {
+	for _, field := range []string{"postgres_source_image", "postgres_image_created", "mysql_source_image", "mysql_image_created", "mysql_server"} {
 		if strings.Contains(string(encoded), field) {
 			t.Fatalf("the acceptance matrix carries %s: %s", field, encoded)
 		}
@@ -657,6 +768,13 @@ func TestVerifyWorkflowHoldsTheDatabaseLinesCall(t *testing.T) {
 			"          E2E_MYSQL_IMAGE_CREATED: ${{ matrix.mysql_image_created }}\n",
 			"", "lifecycle environment bindings",
 		},
+		"no MySQL server handed to the driver": {
+			"          E2E_MYSQL_SERVER: ${{ matrix.mysql_server }}\n",
+			"", "lifecycle environment bindings",
+		},
+		"one server on every job": {
+			"E2E_MYSQL_SERVER: ${{ matrix.mysql_server }}", "E2E_MYSQL_SERVER: mariadb", "lifecycle environment bindings",
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -797,6 +915,14 @@ func TestTheDriverReadsAMySQLLineFromTheVersionTheImageInstalls(t *testing.T) {
 		// A Debian build, and a version with no package suffix.
 		"8.0.40-1debian12": "8.0",
 		"8.4.11":           "8.4",
+		// What MariaDB's images declare as MARIADB_VERSION, a Debian version
+		// with an epoch: 12.3 and 11.8 at their pins of 2026-10-26.
+		"1:12.3.3+maria~ubu2404": "12.3",
+		"1:11.8.5+maria~ubu2404": "11.8",
+		"12.3.3+maria~ubu2404":   "12.3",
+		"1:12.3":                 "",
+		":12.3.3+maria~ubu2404":  "",
+		"1:12.3.x":               "",
 		// What 26.10 declares as MYSQL_MAJOR, and other values that name no
 		// version.
 		"innovation":          "",
@@ -816,6 +942,54 @@ func TestTheDriverReadsAMySQLLineFromTheVersionTheImageInstalls(t *testing.T) {
 			}
 			if got != want {
 				t.Fatalf("mysql_version_line %q = %q, want %q", version, got, want)
+			}
+		})
+	}
+}
+
+// The driver reads the release from the variable the line's server declares it in,
+// so a MySQL image under a MariaDB line, or the other way round, declares nothing
+// on the line and fails, and the server that is neither is refused before that.
+func TestTheDriverReadsTheReleaseTheServersImageDeclares(t *testing.T) {
+	t.Parallel()
+	driver, err := os.ReadFile(repositoryFile(t, e2eHarnessPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		chosen   = `mysql_version_variable=$(mysql_server_version_variable "$E2E_MYSQL_SERVER")`
+		read     = `mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n "s/^$mysql_version_variable=//p")`
+		declared = `mysql_image_declared=$(mysql_version_line "$mysql_image_version")`
+	)
+	for _, line := range []string{chosen, read, declared} {
+		if strings.Count(string(driver), "\n"+line+"\n") != 1 {
+			t.Fatalf("the driver does not run %q once", line)
+		}
+	}
+	// The driver's own lines, over the environments the pinned images declare.
+	script := functionsFromDriver(t, "mysql_server_version_variable", "mysql_version_line") +
+		"E2E_MYSQL_SERVER=$1\nmysql_image_environment=$2\n" + chosen + "\n" + read + "\n" + declared + "\n" +
+		`printf '%s|%s\n' "$mysql_version_variable" "$mysql_image_declared"`
+	const (
+		mysqlEnvironment   = "PATH=/usr/local/sbin\nGOSU_VERSION=1.19\nMYSQL_MAJOR=innovation\nMYSQL_VERSION=26.10.0-1.el9\nMYSQL_SHELL_VERSION=26.10.0-1.el9"
+		mariadbEnvironment = "PATH=/usr/local/sbin\nGOSU_VERSION=1.19\nLANG=C.UTF-8\nMARIADB_VERSION=1:12.3.3+maria~ubu2404"
+	)
+	for name, test := range map[string]struct{ server, environment, want string }{
+		"MySQL's image under MySQL":     {"mysql", mysqlEnvironment, "MYSQL_VERSION|26.10"},
+		"MariaDB's image under MariaDB": {"mariadb", mariadbEnvironment, "MARIADB_VERSION|12.3"},
+		"MySQL's image under MariaDB":   {"mariadb", mysqlEnvironment, "MARIADB_VERSION|"},
+		"MariaDB's image under MySQL":   {"mysql", mariadbEnvironment, "MYSQL_VERSION|"},
+		"a server that is neither":      {"percona", mysqlEnvironment, "|"},
+		"the server's name in capitals": {"MariaDB", mariadbEnvironment, "|"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runDriverFunction(script, "", test.server, test.environment)
+			if err != nil {
+				t.Fatalf("sh: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("the driver reads %q, want %q", got, test.want)
 			}
 		})
 	}
@@ -855,10 +1029,13 @@ func TestTheDriverHoldsAnAddedLinesDateToItsImage(t *testing.T) {
 	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, driver); err != nil {
 		t.Fatalf("verifyDatabaseImageDateCheck() error = %v", err)
 	}
-	versionRead := `mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')`
+	versionRead := `mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n "s/^$mysql_version_variable=//p")`
 	for _, check := range []string{
 		`image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`,
 		`image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`,
+		`E2E_MYSQL_SERVER=${E2E_MYSQL_SERVER:-mysql}`,
+		`mysql_version_variable=$(mysql_server_version_variable "$E2E_MYSQL_SERVER")`,
+		`[ -n "$mysql_version_variable" ] ||`,
 		versionRead,
 		`mysql_image_declared=$(mysql_version_line "$mysql_image_version")`,
 		`[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`,
@@ -871,9 +1048,12 @@ func TestTheDriverHoldsAnAddedLinesDateToItsImage(t *testing.T) {
 		}
 	}
 	// The read that held 8.4 and 9.7 refuses 26.10, which declares
-	// MYSQL_MAJOR=innovation, so going back to it is a regression.
-	majorRead := strings.Replace(versionRead, "MYSQL_VERSION", "MYSQL_MAJOR", 1)
-	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), versionRead, majorRead, 1))); err == nil {
-		t.Fatal("a driver that reads the MySQL line from MYSQL_MAJOR was accepted")
+	// MYSQL_MAJOR=innovation, and a fixed MYSQL_VERSION refuses every MariaDB
+	// image, so going back to either is a regression.
+	for _, fixed := range []string{"MYSQL_MAJOR", "MYSQL_VERSION"} {
+		fixedRead := strings.Replace(versionRead, "$mysql_version_variable", fixed, 1)
+		if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), versionRead, fixedRead, 1))); err == nil {
+			t.Fatalf("a driver that reads the MySQL line from %s alone was accepted", fixed)
+		}
 	}
 }

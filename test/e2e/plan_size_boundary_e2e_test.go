@@ -154,7 +154,7 @@ func (d *dataPlane) planSizeBoundaries() {
 				return reading{}
 			}
 			current := window.waitForSchema("the real native approval gate", planAwaitingApproval)
-			d.assertPlan(name, reference, digest, dialect, false, before, before, false)
+			d.assertPlan(name, reference, digest, engine, false, before, before, false)
 			plan := d.schemaPlan(current.Status.Plan.Name)
 			planClient := operationSQLClient{resourceUID: string(current.UID), jobUID: d.captured.jobUID, podUID: d.captured.podUID, operation: "plan"}
 			observe := window.resultControl(current, "observe", before)
@@ -176,7 +176,7 @@ func (d *dataPlane) planSizeBoundaries() {
 		d.check(err, "derive the exact native executable boundary")
 		maximum := create("maximum", repeated, suffix, false)
 		document, _ := d.rebuildPlanDocument(maximum.plan)
-		d.check(executablePlanAtLimit(maximum.plan, document, dialect, repeated, suffix), "bind the complete 16-chunk maximum plan to its real native SQL")
+		d.check(executablePlanAtLimit(maximum.plan, document, engine, d.planDialect(engine), repeated, suffix), "bind the complete 16-chunk maximum plan to its real native SQL")
 		beforeApply := d.checkpointJobs(maximum.schema, "apply")
 		beforeSQL := maximum.window.audit.snapshot()
 		approval := "e2e-size-" + engine + "-approved"

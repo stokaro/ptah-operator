@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +72,16 @@ func TestMySQLAuditUsesTheClientAddressAndAddsItsSessions(t *testing.T) {
 	if err != nil || counts.clients["10.244.1.7"] != 6 || counts.clients["10.244.1.8"] != 1 || counts.records != 10 {
 		t.Fatalf("unexpected audit counts: %+v error=%v", counts, err)
 	}
+	// What the same query read from MariaDB 12.3.3 on 2026-11-24, after one
+	// session of three statements from another container: its user_host has
+	// MySQL's shape.
+	mariadb := []byte(`{"client": "app[app] @  [192.168.215.7]", "count": 3}
+{"client": "root[root] @  [127.0.0.1]", "count": 20}
+`)
+	counts, err = mysqlAuditCounts(mariadb)
+	if err != nil || counts.clients["192.168.215.7"] != 3 || counts.clients["127.0.0.1"] != 20 || counts.records != 23 {
+		t.Fatalf("MariaDB 12.3 audit counts: %+v error=%v", counts, err)
+	}
 	for _, broken := range []string{"", `{}`, `{"client":"user [bad]","count":1}`, `{"client":"user [10.244.1.7]","count":0}`,
 		`{"client":"user [10.244.1.7]","count":-1}`, string(raw) + `{"client":`} {
 		if _, err := mysqlAuditCounts([]byte(broken)); err == nil {
@@ -98,6 +110,49 @@ func TestSQLAuditDeltaRejectsMissingOrLostEvidence(t *testing.T) {
 		if _, err := sqlAuditDelta(sample.before, sample.after, sample.ip); err == nil {
 			t.Fatal("incomplete or rolled-back audit passed")
 		}
+	}
+}
+
+// The harness runs mysqlClient inside the server's own container, which ships
+// mysql in MySQL's image and only mariadb in MariaDB's. A container with neither
+// has to fail the call rather than run something else.
+func TestTheMySQLClientIsTheOneTheServersImageShips(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		ships []string
+		want  string
+	}{
+		"MySQL's image":   {[]string{"mysql"}, "mysql"},
+		"MariaDB's image": {[]string{"mariadb"}, "mariadb"},
+		// MariaDB 10.x shipped mysql as a link to mariadb.
+		"an image with both": {[]string{"mysql", "mariadb"}, "mysql"},
+		"neither":            {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			bin := t.TempDir()
+			for _, client := range test.ships {
+				script := "#!/bin/sh\nprintf '%s %s %s\\n' \"${0##*/}\" \"$MYSQL_PWD\" \"$*\"\n"
+				if err := os.WriteFile(filepath.Join(bin, client), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The harness's own shape: a password in the environment and the
+			// statement as an argument.
+			command := exec.Command("sh", "-ec", `MYSQL_PWD=secret `+mysqlClient+` --protocol=tcp -Nse "$1"`, "sh", "SELECT 1")
+			command.Env = []string{"PATH=" + bin}
+			output, err := command.Output()
+			if test.want == "" {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 127 {
+					t.Fatalf("a container with no client ran %q, error %v, want exit status 127", output, err)
+				}
+				return
+			}
+			if want := test.want + " secret --protocol=tcp -Nse SELECT 1\n"; err != nil || string(output) != want {
+				t.Fatalf("the call ran %q, error %v, want %q", output, err, want)
+			}
+		})
 	}
 }
 

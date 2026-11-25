@@ -49,7 +49,7 @@ func newSchemaSQLPolicy(engine, database string) (*schemaSQLPolicy, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(schemaSQLContract))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&contract); err != nil || contract.SchemaVersion != 1 || len(contract.PtahCommit) != 40 || len(contract.Statements) != 112 {
+	if err := decoder.Decode(&contract); err != nil || contract.SchemaVersion != 1 || len(contract.PtahCommit) != 40 || len(contract.Statements) != 124 {
 		return nil, errors.New("schema SQL audit contract is incomplete")
 	}
 	policy := &schemaSQLPolicy{engine: engine, database: database, allowed: map[schemaSQLKey]bool{}}
@@ -64,7 +64,11 @@ func newSchemaSQLPolicy(engine, database string) (*schemaSQLPolicy, error) {
 		}
 		statement := row.Statement
 		if engine == "mysql" {
+			// MariaDB also names the database as an identifier, in SHOW CREATE
+			// TABLE `{{database}}`.`e2e_widgets`. The identifier pattern above
+			// leaves nothing in the name to quote.
 			statement = strings.ReplaceAll(statement, "'{{database}}'", "'"+database+"'")
+			statement = strings.ReplaceAll(statement, "`{{database}}`", "`"+database+"`")
 		}
 		for _, operation := range row.Operations {
 			key := schemaSQLKey{operation, row.Command, statement, row.Parameters}

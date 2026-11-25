@@ -90,6 +90,20 @@ networks were removed; the borrowed images were preserved.
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
 - Reading SHA-256: `b4f213cd8d64fb0082f76892670bf27522aac34baa81873f6b1846072c98179c`
 
+## MariaDB 12.3
+
+- Reading: [mariadb-12.3-restored-history-refusal.jsonl](mariadb-12.3-restored-history-refusal.jsonl)
+- Server image: `mariadb:12.3@sha256:71541e69e0a1fbec2fa57d6b3b30d751c7847ca77ce66f5af4ffff48060c37c8`
+- Reading SHA-256: `37c7f67c2eda68afe7e920a07168fd32d488cc80703def8cc8876fe63c3f63b6`
+
+The same probe on 2026-11-24 with the v0.35.1 release image (`ff4a4368`),
+under engine `mysql`. The refused Apply exits 2 as on MySQL, and its 91
+records are the MySQL reading's less five reads of
+`restrict_fk_on_non_standard_key`, a variable MariaDB does not have, and one
+Prepare of the lock query; every Execute of the lock is there. The MySQL
+predicate admits it unchanged, and
+`TestMySQLRestoredHistorySQLAuditAcceptsMariaDB` holds it to the reading.
+
 ## Permitted diagnostic contract
 
 The existing History SQL remains permitted. Only the exact refused Apply Job

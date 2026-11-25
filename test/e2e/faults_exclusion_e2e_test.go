@@ -20,10 +20,11 @@ func (f *faultRun) exclusionPolicyChanges() {
 	for _, engine := range []string{"postgresql", "mysql"} {
 		name, database := "e2e-exclusion-policy-"+engine, "e2e_exclusion_policy"
 		secret := name + "-db"
-		kind, dialect, reference := "PostgreSQL", "postgres", f.pgReference
+		kind, reference := "PostgreSQL", f.pgReference
 		if engine == "mysql" {
-			kind, dialect, reference = "MySQL", "mysql", f.mysqlReference
+			kind, reference = "MySQL", f.mysqlReference
 		}
+		planned := f.planDialect(engine)
 		login := f.createDocumentedDatabase(engine, database, secret)
 		f.query(engine, database, "CREATE TABLE "+excludedPolicyTable+" (id bigint NOT NULL PRIMARY KEY, note varchar(255)); INSERT INTO "+excludedPolicyTable+" VALUES (701, 'outside-managed-scope')")
 		if engine == "postgresql" {
@@ -40,7 +41,7 @@ func (f *faultRun) exclusionPolicyChanges() {
 		})
 		old := f.schemaPlan(approved.Status.Plan.Name)
 		digest := approved.Status.Source.Digest
-		f.check(committedPlan(old, name, digest, dialect, true, f.controller, f.stateVersion()), "read the original scope's plan")
+		f.check(committedPlan(old, name, digest, planned, true, f.controller, f.stateVersion()), "read the original scope's plan")
 		oldDocument := f.exclusionPlanDocument(old)
 		initialObserve := sqlWindow.resultControl(approved, "observe", initialJobs)
 		initialPlan := sqlWindow.resultControl(approved, "plan", initialJobs)
@@ -63,9 +64,9 @@ func (f *faultRun) exclusionPolicyChanges() {
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
 		replacementPlan := sqlWindow.resultControl(current, "plan", replacementJobs)
-		f.check(committedPlan(fresh, name, digest, dialect, false, f.controller, f.stateVersion()), "read the narrowed scope's plan")
+		f.check(committedPlan(fresh, name, digest, planned, false, f.controller, f.stateVersion()), "read the narrowed scope's plan")
 		f.check(changedExcludedPolicyPlan(old, fresh), "bind the new approval to the changed scope")
-		f.check(excludedPolicyDocuments(oldDocument, f.exclusionPlanDocument(fresh)), "verify the excluded table's DROP was removed")
+		f.check(excludedPolicyDocuments(oldDocument, f.exclusionPlanDocument(fresh), planned), "verify the excluded table's DROP was removed")
 		f.waitForApproval(name+"-original", "the wider-scope approval to become stale", func(approval *ptahv1alpha1.PtahSchemaApproval) bool {
 			return conditionIs(approval.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 		})

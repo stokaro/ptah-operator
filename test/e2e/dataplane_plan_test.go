@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/base64"
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -262,6 +264,99 @@ func TestPlanStatusBoundHoldsThePlanToThisManager(t *testing.T) {
 	}
 }
 
+// keyPartExpression is the EXPRESSION column of information_schema.statistics,
+// and not GENERATION_EXPRESSION of information_schema.columns.
+var keyPartExpression = regexp.MustCompile(`(^|[^_a-z])expression\b`)
+
+// MariaDB 12.3.3 refused the MySQL form with "Unknown column 'expression'", and
+// on MySQL 8.4.11 the two forms read the same digest and counts (measured on
+// 2026-11-24 against the pinned images). MySQL keeps its query byte for byte.
+func TestCatalogQueriesNameTheKeyPartExpressionOnlyOnMySQL(t *testing.T) {
+	t.Parallel()
+	for name, query := range map[string]func(string) string{
+		"fingerprint": mysqlFingerprintSQL,
+		"exact index": func(server string) string { return mysqlExactIndexQuery(server, "e2e_widgets_name_idx", 1) },
+	} {
+		mysql, mariadb := query("mysql"), query("mariadb")
+		if !keyPartExpression.MatchString(mysql) {
+			t.Errorf("the MySQL %s query reads no key part expression:\n%s", name, mysql)
+		}
+		if keyPartExpression.MatchString(mariadb) {
+			t.Errorf("the MariaDB %s query reads a column MariaDB does not have:\n%s", name, mariadb)
+		}
+		if keyPartExpression.ReplaceAllString(mysql, "${1}NULL") != mariadb {
+			t.Errorf("the %s query differs between the servers in more than the key part expression", name)
+		}
+	}
+	if !strings.Contains(mysqlFingerprintSQL("mysql"), "COALESCE(expression, '<NULL>')") ||
+		!strings.Contains(mysqlExactIndexQuery("mysql", "i", 0), "AND expression IS NULL AND") {
+		t.Error("the MySQL queries no longer read the key part expression as they did")
+	}
+}
+
+// Ptah names the server it reached, so the dialect follows the server the
+// driver started for engine mysql and refuses the other one's.
+func TestPlanDialectFollowsTheServer(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ engine, server, want string }{
+		{"postgresql", "mysql", "postgres"},
+		{"postgresql", "mariadb", "postgres"},
+		{"mysql", "mysql", "mysql"},
+		{"mysql", "mariadb", "mariadb"},
+	} {
+		got, err := planDialect(test.engine, test.server)
+		if err != nil || got != test.want {
+			t.Errorf("planDialect(%q, %q) = %q, %v, want %q", test.engine, test.server, got, err, test.want)
+		}
+	}
+	for _, test := range []struct{ engine, server string }{
+		{"mysql", ""},
+		{"mysql", "MariaDB"},
+		{"mysql", "percona"},
+		{"postgres", "mysql"},
+		{"MySQL", "mysql"},
+	} {
+		if got, err := planDialect(test.engine, test.server); err == nil {
+			t.Errorf("planDialect(%q, %q) = %q, want a refusal", test.engine, test.server, got)
+		}
+	}
+}
+
+func committedPlanFixture(dialect string) *ptahv1alpha1.PtahSchemaPlan {
+	plan := &ptahv1alpha1.PtahSchemaPlan{Spec: ptahv1alpha1.PtahSchemaPlanSpec{
+		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaRef: ptahv1alpha1.ImmutableObjectReference{Name: "schema", UID: "schema-uid"},
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Dialect: dialect,
+		ExecutionBindingID: "v1-" + strings.Repeat("0", 32), ControllerImage: "manager", ControllerRevision: "abc", ControllerStateVersion: 3,
+		ActualStateFingerprint: "sha256:" + strings.Repeat("b", 64), StatementCount: 1,
+		Chunks: []ptahv1alpha1.PlanChunkReference{{Name: "chunk", Index: 0, Size: 1, Digest: "sha256:" + strings.Repeat("c", 64)}},
+	}}
+	plan.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}}
+	return plan
+}
+
+// A plan is held to the dialect of the server it was planned against: a MariaDB
+// server's plan says mariadb, and neither server's plan passes for the other's.
+func TestCommittedPlanHoldsTheServersDialect(t *testing.T) {
+	t.Parallel()
+	identity := controllerIdentity{image: "manager", revision: "abc", stateVersion: "3"}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, dialect := range []string{"postgres", "mysql", "mariadb"} {
+		if err := committedPlan(committedPlanFixture(dialect), "schema", digest, dialect, false, identity, 3); err != nil {
+			t.Errorf("a %s plan was refused: %v", dialect, err)
+		}
+	}
+	for _, test := range []struct{ planned, want string }{
+		{"mysql", "mariadb"},
+		{"mariadb", "mysql"},
+		{"postgres", "mysql"},
+		{"", "mysql"},
+	} {
+		if err := committedPlan(committedPlanFixture(test.planned), "schema", digest, test.want, false, identity, 3); err == nil {
+			t.Errorf("a plan in %q was accepted where the server plans in %q", test.planned, test.want)
+		}
+	}
+}
+
 func TestResultBindingsReadTheSchemasEvidence(t *testing.T) {
 	t.Parallel()
 	schema := boundSchema()
@@ -288,6 +383,30 @@ func TestResultBindingsReadTheSchemasEvidence(t *testing.T) {
 		edit(&result)
 		if err := observedDriftBound(result, target, "postgres"); err == nil {
 			t.Errorf("an Observe result with %s was accepted", name)
+		}
+	}
+	// Each MySQL server's report is read in its own dialect, and refused in the
+	// other's.
+	for _, test := range []struct{ observed, want string }{
+		{"mysql", "mysql"},
+		{"mariadb", "mariadb"},
+	} {
+		result := observe
+		result.ObservedDialect = test.observed
+		if err := observedDriftBound(result, target, test.want); err != nil {
+			t.Errorf("a %s Observe result was refused: %v", test.observed, err)
+		}
+	}
+	for _, test := range []struct{ observed, want string }{
+		{"mysql", "mariadb"},
+		{"mariadb", "mysql"},
+		{"postgres", "mysql"},
+		{"mysql", "postgres"},
+	} {
+		result := observe
+		result.ObservedDialect = test.observed
+		if err := observedDriftBound(result, target, test.want); err == nil {
+			t.Errorf("a %s Observe result was accepted where the server reports %s", test.observed, test.want)
 		}
 	}
 	plan := runner.Result{

@@ -15,8 +15,8 @@ import unittest
 from unittest import mock
 
 import schema_sql_readings
-from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_lines, added_postgresql_lines, comparable, contract,
-                                 contract_readings, documented_statements, received)
+from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_lines, comparable, contract, contract_readings,
+                                 documented_statements, line_witnesses, received)
 
 READINGS = ROOT / 'testdata/e2e/readings'
 CONTRACT = ROOT / 'test/e2e/schema-sql-contract.json'
@@ -27,25 +27,45 @@ class SchemaSQLReadingsTest(unittest.TestCase):
         checked_in = json.loads(CONTRACT.read_text())
         self.assertEqual(contract(READINGS, checked_in['ptahCommit'], checked_in['scope']), checked_in)
 
-    def test_every_added_postgresql_line_witnesses_every_operation(self):
-        lines = added_postgresql_lines()
-        self.assertTrue(lines, 'the catalog adds no PostgreSQL line, so this checks nothing')
-        readings = contract_readings('postgresql')
-        for major, _ in lines:
-            witnessed = {operation for name, operation in readings if name.startswith(f'postgresql-{major}-')}
-            self.assertEqual(witnessed, {operation for _, operation in LINE_WITNESSES})
-            for name, _ in LINE_WITNESSES:
-                self.assertTrue((READINGS / f'postgresql-{major}-schema-{name}.jsonl').is_file())
+    def test_every_added_line_witnesses_every_operation(self):
+        servers = set()
+        for engine in ('postgresql', 'mysql'):
+            lines = added_lines(engine)
+            self.assertTrue(lines, f'the catalog adds no {engine} line, so this checks nothing')
+            readings = contract_readings(engine)
+            for stem, _, server in lines:
+                servers.add(server)
+                with self.subTest(stem):
+                    self.assertTrue(stem.startswith(f'{server}-'), stem)
+                    kept = [(f'{stem}-schema-{name}.jsonl', operation) for name, operation in line_witnesses(server)]
+                    self.assertEqual([reading for reading in readings if reading[0].startswith(f'{stem}-')], kept)
+                    self.assertEqual({operation for _, operation in kept}, {operation for _, operation in LINE_WITNESSES})
+                    for name, _ in kept:
+                        self.assertTrue((READINGS / name).is_file(), name)
+        # A MariaDB line runs under engine mysql and keeps the exclusion
+        # readings beside the ones every line keeps.
+        self.assertIn('mariadb', servers)
+        self.assertEqual(line_witnesses('mysql'), LINE_WITNESSES)
+        self.assertEqual(line_witnesses('mariadb')[:len(LINE_WITNESSES)], LINE_WITNESSES)
+        self.assertIn(('exclusion-wide-plan', 'plan'), line_witnesses('mariadb'))
 
-    def test_every_added_mysql_line_witnesses_every_operation(self):
-        lines = added_lines('mysql')
-        self.assertTrue(lines, 'the catalog adds no MySQL line, so this checks nothing')
-        readings = contract_readings('mysql')
-        for release, _ in lines:
-            witnessed = {operation for name, operation in readings if name.startswith(f'mysql-{release}-')}
-            self.assertEqual(witnessed, {operation for _, operation in LINE_WITNESSES})
-            for name, _ in LINE_WITNESSES:
-                self.assertTrue((READINGS / f'mysql-{release}-schema-{name}.jsonl').is_file())
+    def test_a_line_is_named_after_its_server(self):
+        catalog = {'added': [
+            {'engine': 'mysql', 'line': '12.3.x', 'image': 'mysql:12.3'},
+            {'engine': 'mysql', 'line': '9.7.x LTS', 'image': 'mysql:9.7'},
+            {'engine': 'mysql', 'server': 'mariadb', 'line': '12.3.x', 'image': 'mariadb:12.3'},
+            {'engine': 'postgresql', 'line': '18.x', 'image': 'postgres:18'},
+            # An empty server is the engine's own, as the witness test reads it.
+            {'engine': 'postgresql', 'server': '', 'line': '17.x', 'image': 'postgres:17'},
+        ]}
+        root = Path(temporary_directory(self))
+        (root / 'support').mkdir()
+        (root / 'support/databases.json').write_text(json.dumps(catalog))
+        with mock.patch.object(schema_sql_readings, 'ROOT', root):
+            self.assertEqual(added_lines('mysql'), [('mysql-12.3', 'mysql:12.3', 'mysql'), ('mysql-9.7', 'mysql:9.7', 'mysql'),
+                                                  ('mariadb-12.3', 'mariadb:12.3', 'mariadb')])
+            self.assertEqual(added_lines('postgresql'), [('postgresql-18', 'postgres:18', 'postgresql'),
+                                                       ('postgresql-17', 'postgres:17', 'postgresql')])
 
     def test_statements_are_read_the_way_the_audit_reads_them(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -75,11 +95,17 @@ class SchemaSQLReadingsTest(unittest.TestCase):
                 ('Connect', 'ptah_audit@172.19.0.3 on ptah_audit_schema using TCP/IP'),
                 ('Prepare', 'SELECT ? FROM t WHERE s = ?'),
                 ('Execute', "SELECT 1 FROM t WHERE s = 'ptah_audit_schema'"),
+                # MariaDB names the database as an identifier too. Another
+                # name, or the same name unquoted, is left as it was sent.
+                ('Query', 'SHOW CREATE TABLE `ptah_audit_schema`.`e2e_widgets`'),
+                ('Query', "SELECT 1 FROM `ptah_audit_schema2`.t WHERE s = 'ptah_audit_schema2' OR s = ptah_audit_schema"),
                 ('Quit', ''),
             ]) + '\n')
             self.assertEqual(list(received('mysql', mysql)),
                              [('Prepare', 'SELECT ? FROM t WHERE s = ?', ''),
-                              ('Execute', "SELECT 1 FROM t WHERE s = '{{database}}'", '')])
+                              ('Execute', "SELECT 1 FROM t WHERE s = '{{database}}'", ''),
+                              ('Query', 'SHOW CREATE TABLE `{{database}}`.`e2e_widgets`', ''),
+                              ('Query', "SELECT 1 FROM `ptah_audit_schema2`.t WHERE s = 'ptah_audit_schema2' OR s = ptah_audit_schema", '')])
 
 
 class ComparableTest(unittest.TestCase):
@@ -159,8 +185,9 @@ class JournalFilterTest(unittest.TestCase):
 
     def test_it_keeps_the_executor_and_leaves_out_the_lab(self):
         admits = self.admits()
-        files = sorted(READINGS.glob('mysql-schema-*.jsonl')) + [READINGS / 'mysql-migration-history-audit.jsonl',
-                                                                   READINGS / 'mysql-restored-history-refusal.jsonl']
+        files = sorted(READINGS.glob('mysql-schema-*.jsonl')) + sorted(READINGS.glob('mariadb-*-schema-*.jsonl')) + \
+            [READINGS / 'mysql-migration-history-audit.jsonl', READINGS / 'mysql-restored-history-refusal.jsonl']
+        self.assertTrue(any(path.name.startswith('mariadb-') for path in files), files)
         clients = {json.loads(line)['client'] for path in files for line in path.read_text().splitlines() if line.strip()}
         self.assertGreaterEqual(len(clients), 2, files)
         for client in sorted(clients):
@@ -242,6 +269,18 @@ class LabCleanupTest(unittest.TestCase):
                 self.fail('the block ran after a failed start')
         self.assertEqual(self.called('run'), [])
         self.assertEqual(self.called('rm'), [])
+
+    def test_each_server_is_run_with_the_client_its_image_ships(self):
+        for server, client in (('mysql', 'mysql'), ('mariadb', 'mariadb'), (None, 'mysql')):
+            with self.subTest(server):
+                self.calls.clear()
+                with Lab('ctx', 'mysql', 'executor', server_image='image', server=server) as lab:
+                    lab.sql('SELECT 1')
+                execs = self.called('exec')
+                self.assertGreaterEqual(len(execs), 3, self.calls)
+                for call in execs:
+                    sent = call[call.index(lab.server) + 1]
+                    self.assertEqual(sent, client, call)
 
     def test_a_start_that_works_removes_nothing_until_the_block_ends(self):
         lab = Lab('ctx', 'postgresql', 'executor')
